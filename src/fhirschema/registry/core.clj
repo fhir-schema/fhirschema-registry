@@ -1,5 +1,6 @@
 (ns fhirschema.registry.core
   (:require [clojure.string :as str]
+            [clojure.java.io :as io]
             [cheshire.core])
   (:import [com.google.cloud.storage StorageOptions
             BlobInfo BlobId
@@ -36,6 +37,14 @@
       (cb w))))
 
 
+(defn write-ndjson-gz [filename cb]
+  (with-open [writer (-> filename
+                         (io/output-stream)
+                         (GZIPOutputStream.)
+                         (io/writer))]
+    (cb writer)))
+
+
 (comment
   (def storage (.getService (StorageOptions/getDefaultInstance)))
 
@@ -52,7 +61,6 @@
          (recur next-page (into acc (.getValues page)))
          (into acc (.getValues page))))))
 
-  (.getNextPage page)
 
   (count pkg)
 
@@ -86,36 +94,49 @@
                          (println res))
                        acc))))
 
-  (doseq [blb pkg]
-    (let [[_ pkg file] (str/split (.getName blb) #"/")]
-      (when (= file "package.ndjson.gz")
-        (let [[pkg-name version] (str/split pkg #"#")]
-          (println pkg-name version)
-          (write-blob
-           storage "fhir-packages" (str "v1/" pkg-name "/v" version ".ndjson.gz")
-           (fn [w]
-             (read-blob blb (fn [acc x i]
-                              (let [acc (if (= i 0)
-                                          {:url (:name x) :version (:version x)}
-                                          acc)
-                                    res (cond
-                                          (= i 0)
-                                          (assoc x :resourceType "Package" :meta {:package acc} :url (:name x))
-                                          (:resourceType x)
-                                          (-> x
-                                              (dissoc  :package-meta)
-                                              (assoc-in [:meta :package] acc))
 
-                                          (and (not (:resourceType x)) (:package-meta x))
-                                          (-> x
-                                              (assoc :resourceType "FHIRSchema")
-                                              (dissoc :package-meta)
-                                              (assoc-in [:meta :package] acc))
-                                          :else nil)]
-                                (when res
-                                  (.write w (cheshire.core/generate-string res))
-                                  (.write w "\n"))
-                                acc)))))))))
+
+  (write-ndjson-gz
+   "resources.ndjson.gz"
+   (fn [aw]
+     (doseq [blb pkg]
+       (let [[_ pkg file] (str/split (.getName blb) #"/")]
+         (when (= file "package.ndjson.gz")
+           (let [[pkg-name version] (str/split pkg #"#")]
+             (println pkg-name version)
+             (write-blob
+              storage "fhir-packages" (str "v1/" pkg-name "/v" version ".ndjson.gz")
+              (fn [w]
+                (read-blob blb (fn [acc x i]
+                                 (let [acc (if (= i 0)
+                                             {:url (:name x) :version (:version x)}
+                                             acc)
+                                       res (cond
+                                             (= i 0)
+                                             (assoc x :resourceType "Package"
+                                                    :meta {:package acc}
+                                                    :url (:name x)
+                                                    :dependencies (reduce (fn [acc dpe]
+                                                                            (let [[pkg ver] (str/split dpe #"#")]
+                                                                              (assoc acc pkg ver)))
+                                                                          {} (:dependencies x)))
+                                             (:resourceType x)
+                                             (-> x
+                                                 (dissoc  :package-meta)
+                                                 (assoc-in [:meta :package] acc))
+
+                                             (and (not (:resourceType x)) (:package-meta x))
+                                             (-> x
+                                                 (assoc :resourceType "FHIRSchema")
+                                                 (dissoc :package-meta)
+                                                 (assoc-in [:meta :package] acc))
+                                             :else nil)]
+                                   (when res
+                                     (.write w (cheshire.core/generate-string res))
+                                     (.write w "\n")
+                                     (.write aw (cheshire.core/generate-string res))
+                                     (.write aw "\n"))
+                                   acc)))))))))))
 
 
   (do
