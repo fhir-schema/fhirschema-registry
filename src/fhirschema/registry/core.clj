@@ -36,6 +36,12 @@
      :body results}))
 
 
+(defn run []
+  (def ztx (atom {}))
+  (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
+              :http {:port 8080}}))
+
+
 (comment
   (def ztx (atom {}))
 
