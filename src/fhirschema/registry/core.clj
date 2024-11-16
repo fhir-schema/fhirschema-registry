@@ -46,8 +46,17 @@
     {:status 200
      :body results}))
 
+(defmethod rpc/op :get-stream
+  [ztx {params :query-params :as req}]
+  (let [q (mk-query (:name params))]
+    (println :packages q params)
+    (http/stream
+     req
+     (fn [wr]
+       (pg/fetch ztx  ["select jsonb_build_object('name',name,'versions', versions) as res from package_names where name ilike ?" q]
+                 100 "res" (fn [res _i] (wr res)))))))
 
-(str/split "a:b"  #":")
+;; (str/split "a:b"  #":")
 
 (defmethod rpc/op :get-fhirschema
   [ztx {params :query-params}]
@@ -63,30 +72,7 @@
   (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
               :http {:port 80}}))
 
-
-(comment
-  (def ztx (atom {}))
-
-  (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
-              :http {:port 7777}})
-
-  ztx
-
-  (stop ztx)
-
-
-  (require '[org.httpkit.client :as cl])
-
-  (from-json (slurp (:body @(cl/get "http://localhost:7777/Package?name=r4"))))
-
-  (time
-   (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20fhir%20core")))))
-
-  (pg/execute! ztx ["select 1"])
-  (pg/execute! ztx ["select name from packages where name ilike ? order by name limit 100" "%r4%"])
-
-  (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100" "%fhir\\.r4%"])
-
+(defn init [ztx]
   (pg/execute! ztx ["
 
 drop table packages;
@@ -142,12 +128,44 @@ create index fhirschemas_url on fhirschemas (url, version);
 
   (pg/execute! ztx ["create index package_names_name_trgrm on package_names USING gin (name gin_trgm_ops)"])
 
+  )
 
-  (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20core"))))
+
+(comment
+  (def ztx (atom {}))
+
+  (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
+              :http {:port 7777}})
+
+  ztx
+
+  (stop ztx)
+
+
+  (require '[org.httpkit.client :as cl])
+
+  (from-json (slurp (:body @(cl/get "http://localhost:7777/Package?name=r4"))))
+
+  (time
+   (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20fhir%20core")))))
+
+  (pg/execute! ztx ["select 1"])
+  (pg/execute! ztx ["select name from packages where name ilike ? order by name limit 100" "%r4%"])
+
+  (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100" "%fhir\\.r4%"])
+
+  
+
+
+  @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20core")
 
   (time
    (def s (from-json (slurp (:body @(cl/get "http://localhost:7777/FHIRSchema?package=hl7.fhir.r4.core:4.0.1"))))))
 
   @(cl/get "http://localhost:7777/FHIRSchema?package=hl7.fhir.r4.core:4.0.1")
+
+
+  @(cl/get "http://localhost:7777/stream?name=hl7")
+
 
   )

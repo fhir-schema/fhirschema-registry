@@ -8,10 +8,10 @@
            (java.io BufferedInputStream BufferedReader FileInputStream FileNotFoundException InputStream InputStreamReader)
            (java.util.zip GZIPInputStream)
            (org.postgresql Driver PGConnection PGProperty)
+           [java.sql PreparedStatement ResultSet]
            (org.postgresql.copy CopyManager)
            [org.postgresql.jdbc PgArray]
            [org.postgresql.util PGobject]))
-
 
 (defn coerce [r]
   (->> r
@@ -59,6 +59,18 @@
     (DriverManager/getConnection conn-string (:user opts) (:password opts))))
 
 
+(defn fetch [ztx sql-vector fetch-size field on-row]
+  (with-open [^PreparedStatement ps (jdbc/prepare (connection ztx) sql-vector)]
+    (.setFetchSize ps fetch-size)
+    (let [^ResultSet rs  (.executeQuery ps)]
+      (loop [i 0]
+        (if (.next rs)
+          (do
+            (on-row (.getString rs field) i)
+            (recur (inc i)))
+          i)))))
+
+
 (defn start-2 [ztx config]
   (if-let [c config]
     (let [tmp-conn (get-connection c)
@@ -101,7 +113,20 @@
   (execute! ztx ["select count(*) from _resources"])
   (execute! ztx ["vacuum analyze _resources"])
 
-  :ok
+
+  (with-open [^PreparedStatement ps (jdbc/prepare (connection ztx) ["select name from packages where name ilike ?" "%"])]
+    (.setFetchSize ps 100)
+    (let [^ResultSet rs  (.executeQuery ps)]
+      (loop [i 0]
+        (if (.next rs)
+          (do
+            (println (.getString rs "name"))
+            (recur (inc i)))
+          i))))
+
+  (fetch ztx  ["select name from package_names where name ilike ?" "%"]
+         100 "name" (fn [x i] (println i x)))
+
 
   ;; (copy-ndjson ztx "resources.ndjson.gz")
   (connection ztx)
@@ -119,7 +144,6 @@
                                               (doseq [x pkgs]
                                                 (.write w (cheshire.core/generate-string (:resource x)))
                                                 (.write w "\n"))))
-  
 
   (take 100 pkgs)
 

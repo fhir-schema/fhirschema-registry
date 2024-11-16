@@ -13,7 +13,11 @@
    [ring.util.response]
    [cheshire.core]
    [rpc])
-  (:import [java.io BufferedWriter OutputStreamWriter  ByteArrayInputStream ByteArrayOutputStream]))
+  (:import [java.io BufferedWriter OutputStreamWriter ByteArrayInputStream ByteArrayOutputStream]
+           [java.nio.charset StandardCharsets]
+           [java.util.zip GZIPOutputStream]))
+
+(set! *warn-on-reflection* true)
 
 (defn handle-static [{meth :request-method uri :uri :as req}]
   (let [opts {:root "public"
@@ -73,11 +77,36 @@
     :else
     (let [query-params (parse-params (:query-string req) "UTF-8")]
       (if-let [op (resolve-operation meth uri)]
-        (-> 
+        (->
          (update (rpc/op ztx (assoc (merge req op) :query-params query-params))
-                 :body (fn [x] (when x (cheshire.core/generate-string x))))
+                 :body (fn [x] (if (map? x) (cheshire.core/generate-string x) x)))
          (assoc-in [:headers "content-type"] "application/json"))
         {:status 404}))))
+
+(defn stream [req cb]
+  (server/with-channel req chan
+    (server/on-close chan (fn [_status] (println "Close channel")))
+    (future
+      (try
+        (server/send! chan {:headers {"content-type" "application/x-ndjson" "content-encoding" "gzip"}} false)
+        (let [array (ByteArrayOutputStream.)
+              gzip (GZIPOutputStream. array true)
+              wrtr (BufferedWriter. (OutputStreamWriter. gzip StandardCharsets/UTF_8))
+              wr (fn [^String res]
+                   (.write wrtr res)
+                   (.write wrtr "\n")
+                   (.flush wrtr)
+                   (.flush array)
+                   (server/send! chan (.toByteArray array) false)
+                   (.reset array))]
+          (cb wr)
+          (.finish gzip)
+          (.flush array)
+          (server/send! chan (.toByteArray array) false))
+        (catch Exception e (println :error e))
+        (finally
+          (server/close chan))))))
+
 
 (defn start [ztx config]
   (let [port (or (:port config) 7777)]
