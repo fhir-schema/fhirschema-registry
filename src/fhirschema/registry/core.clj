@@ -42,7 +42,7 @@
   (println :args args)
   (def ztx (atom {}))
   (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
-              :http {:port 8080}}))
+              :http {:port 80}}))
 
 
 (comment
