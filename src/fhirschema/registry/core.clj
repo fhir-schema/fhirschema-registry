@@ -58,13 +58,24 @@
 
 ;; (str/split "a:b"  #":")
 
-(defmethod rpc/op :get-fhirschema
+(defmethod rpc/op :get-fhirschema-old
   [ztx {params :query-params}]
   (let [[pkg v] (str/split (or (:package params) "") #":")
         _ (println :schemas pkg v params)
         results (pg/execute! ztx ["select resource from fhirschemas where package_name = ? and package_version = ?" pkg v])]
     {:status 200
      :body (mapv :resource results)}))
+
+(defmethod rpc/op :get-fhirschema
+  [ztx {params :query-params :as req}]
+  (let [[pkg v] (str/split (or (:package params) "") #":")]
+    (println :schemas pkg v)
+    (if (and (not pkg) (not v))
+      {:status 422 :body {:message "Parameter name=<package>:<version> is required"}}
+      (http/stream
+       req
+       (fn [wr]
+         (pg/fetch ztx  ["select resource as res  from fhirschemas where package_name = ? and package_version = ?" pkg v] 100 "res" (fn [res _i] (wr res))))))))
 
 (defn -main [& args]
   (println :args args)
