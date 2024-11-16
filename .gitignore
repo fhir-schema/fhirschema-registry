@@ -2,3 +2,4 @@
 .nrepl-port
 connection.json
 resources.ndjson.gz
+packages.ndjson.gz

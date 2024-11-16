@@ -12,6 +12,16 @@
         pjson/pjson                                 {:mvn/version "1.0.0"}
 
         http-kit/http-kit                           {:mvn/version "2.5.3"}
+        com.cognitect/transit-clj                   {:mvn/version "1.0.333"}
+
+        ring/ring                                   {:mvn/version "1.10.0"}
+        ring/ring-defaults                          {:mvn/version "0.3.4"}
+
+        healthsamurai/dsql                          {:git/url "https://github.com/HealthSamurai/dsql.git"
+                                                     :sha "7e1564ee0bc24ca3fd6a3ddd39b6ddb93becfcde"}
+
+        hiccup/hiccup               {:mvn/version "1.0.5"}
+        garden/garden               {:mvn/version "1.3.10"}
         }
 
  :aliases

@@ -9,6 +9,7 @@
            (java.util.zip GZIPInputStream)
            (org.postgresql Driver PGConnection PGProperty)
            (org.postgresql.copy CopyManager)
+           [org.postgresql.jdbc PgArray]
            [org.postgresql.util PGobject]))
 
 
@@ -18,6 +19,7 @@
                  (assoc acc (keyword (name k))
                         (cond (instance? PGobject v) (cheshire.core/parse-string (.getValue ^PGobject v) keyword)
                               (instance? java.math.BigDecimal v) (double v)
+                              (instance? PgArray v) (vec (.getArray v))
                               :else v))
                  ) {})))
 
@@ -79,11 +81,11 @@
 (defn start [ztx opts]
   (let [db (get-connection opts)]
     (println :db db (jdbc/execute! db ["select 1"]))
-    (swap! ztx assoc-in [:pg] db)
+    (swap! ztx assoc :pg db)
     :done))
 
 (defn stop [ztx]
-  (when-let [^Connection conn (get-in @ztx [:ctx :pg])]
+  (when-let [^Connection conn (get-in @ztx [:pg])]
     (.close conn)))
 
 (comment
@@ -110,6 +112,15 @@
   (def pkgs
     (execute! ztx ["select * from _resources where resource->>'resourceType' = 'Package' order by resource->>'name'"]))
 
+  (count pkgs)
+
+  (fhirschema.registry.core/write-ndjson-gz "packages.ndjson.gz"
+                                            (fn [w]
+                                              (doseq [x pkgs]
+                                                (.write w (cheshire.core/generate-string (:resource x)))
+                                                (.write w "\n"))))
+  
+
   (take 100 pkgs)
 
   (execute! ztx ["select count(*) from _resources where resource->>'resourceType' = 'FHIRSchema'"])
@@ -121,6 +132,8 @@
 
   (execute! ztx ["select * from _resources where resource->>'resourceType' = 'Package' and resource->>'name' ilike '%core%' order by resource->>'name'"])
 
+
+  "https://storage.googleapis.com/fhir-packages/v1/Berkay.Sandbox/v0.0.1.ndjson.gz"
 
   (execute! ztx ["
 

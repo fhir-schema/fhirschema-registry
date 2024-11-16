@@ -1,173 +1,98 @@
 (ns fhirschema.registry.core
-  (:require [clojure.string :as str]
-            [clojure.java.io :as io]
-            [cheshire.core])
-  (:import [com.google.cloud.storage StorageOptions
-            BlobInfo BlobId
-            Storage Bucket Blob Storage$BucketGetOption
-            Storage$BlobListOption
-            Blob$BlobSourceOption
-            Storage$BlobWriteOption]
-           [java.util.zip GZIPInputStream GZIPOutputStream]
-           [java.nio.channels Channels]
-           [java.io BufferedReader InputStreamReader
-            BufferedWriter OutputStreamWriter]))
+  (:require [http.core :as http]
+            [pg.core :as pg]
+            [clojure.string :as str]
+            [cheshire.core :as json]
+            [rpc]))
 
-(defn read-blob [^Blob blob process-fn]
-  (with-open [input-stream (Channels/newInputStream (.reader blob (into-array Blob$BlobSourceOption [])))
-              gz-stream (GZIPInputStream. input-stream)
-              reader (-> gz-stream InputStreamReader. BufferedReader.)]
-    (loop [line (.readLine reader)
-           line-number 0
-           acc {}]
-      (if line
-        (let [res (cheshire.core/parse-string line keyword)
-              acc (process-fn acc res line-number)]
-          (recur (.readLine reader) (inc line-number) acc))
-        acc))))
+(defn from-json [x]
+  (json/parse-string x keyword))
 
-(defn write-blob [storage bucket file cb]
-  (let [bid (BlobId/of bucket file)
-        binfo (BlobInfo/newBuilder bid)
-        ch (.writer ^Storage storage ^BlobInfo (.build binfo) (into-array Storage$BlobWriteOption []))]
-    (with-open
-      [os (Channels/newOutputStream ch)
-       outz (GZIPOutputStream. os)
-       w (BufferedWriter. (OutputStreamWriter. outz))]
-      (cb w))))
+(defn to-json [x]
+  (json/generate-string x))
+
+(defn start [ztx config]
+  (pg/start ztx (:pg config))
+  (http/start ztx (:http config)))
+
+(defn stop [ztx]
+  (pg/stop ztx)
+  (http/stop ztx))
 
 
-(defn write-ndjson-gz [filename cb]
-  (with-open [writer (-> filename
-                         (io/output-stream)
-                         (GZIPOutputStream.)
-                         (io/writer))]
-    (cb writer)))
+(defmethod rpc/op :get-package
+  [ztx req]
+  (println @ztx)
+  {:status 200
+   :body (pg/execute! ztx ["select * from packages limit 10"])})
+
+(defmethod rpc/op :get-package-lookup
+  [ztx {params :query-params}]
+  (println params)
+  (let [results (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100"
+                                  (str "%" (-> (str/replace (str/trim (or (:name params) "")) #"\s+" "%")
+                                               (str/replace #"\." "\\.")))])]
+    {:status 200
+     :body results}))
 
 
 (comment
-  (def storage (.getService (StorageOptions/getDefaultInstance)))
+  (def ztx (atom {}))
 
-  (def ^Bucket bucket (.get storage "fhir-schema-registry" (into-array Storage$BucketGetOption [])))
+  (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
+              :http {:port 7777}})
 
+  ztx
 
-  (def page (.list bucket (into-array Storage$BlobListOption [])))
-
-  (def pkg
-    (time
-     (loop [page page acc (into [] (.getValues page))]
-       (println ".")
-       (if-let [next-page (.getNextPage page)]
-         (recur next-page (into acc (.getValues page)))
-         (into acc (.getValues page))))))
+  (stop ztx)
 
 
-  (count pkg)
+  (require '[org.httpkit.client :as cl])
 
-  (str/split (:name (bean (first pkg))) #"/")
+  (from-json (slurp (:body @(cl/get "http://localhost:7777/Package?name=r4"))))
 
-  (let [blb (second pkg)]
-    (read-blob blb (fn [acc x i]
-                     (let [acc (if (= i 0)
-                                 {:url (:name x) :version (:version x)}
-                                 acc)
-                           res (cond
-                                 (= i 0)
-                                 (assoc x :resourceType "Package"
-                                        :meta {:package acc} :url (:name x)
-                                        :dependencies (reduce (fn [acc dpe]
-                                                                (let [[pkg ver] (str/split dpe #"#")]
-                                                                  (assoc acc pkg ver)))
-                                                              {} (:dependencies x)))
-                                 (:resourceType x)
-                                 (-> x
-                                     (dissoc  :package-meta)
-                                     (assoc-in [:meta :package] acc))
+  (time
+   (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=fhir.r4")))))
 
-                                 (and (not (:resourceType x)) (:package-meta x))
-                                 (-> x
-                                     (assoc :resourceType "FHIRSchema")
-                                     (dissoc :package-meta)
-                                     (assoc-in [:meta :package] acc))
-                                 :else nil)]
-                       (when res
-                         (println res))
-                       acc))))
+  (pg/execute! ztx ["select 1"])
+  (pg/execute! ztx ["select name from packages where name ilike ? order by name limit 100" "%r4%"])
 
+  (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100" "%fhir\\.r4%"])
 
+  (pg/execute! ztx ["
 
-  (write-ndjson-gz
-   "resources.ndjson.gz"
-   (fn [aw]
-     (doseq [blb pkg]
-       (let [[_ pkg file] (str/split (.getName blb) #"/")]
-         (when (= file "package.ndjson.gz")
-           (let [[pkg-name version] (str/split pkg #"#")]
-             (println pkg-name version)
-             (write-blob
-              storage "fhir-packages" (str "v1/" pkg-name "/v" version ".ndjson.gz")
-              (fn [w]
-                (read-blob blb (fn [acc x i]
-                                 (let [acc (if (= i 0)
-                                             {:url (:name x) :version (:version x)}
-                                             acc)
-                                       res (cond
-                                             (= i 0)
-                                             (assoc x :resourceType "Package"
-                                                    :meta {:package acc}
-                                                    :url (:name x)
-                                                    :dependencies (reduce (fn [acc dpe]
-                                                                            (let [[pkg ver] (str/split dpe #"#")]
-                                                                              (assoc acc pkg ver)))
-                                                                          {} (:dependencies x)))
-                                             (:resourceType x)
-                                             (-> x
-                                                 (dissoc  :package-meta)
-                                                 (assoc-in [:meta :package] acc))
+drop table packages;
+create table packages as (
+select
+resource->>'url' as name,
+case when jsonb_typeof(resource->'fhirVersions') = 'array' then
+(select array_agg(x)::text[] from jsonb_array_elements_text(resource->'fhirVersions') x)
+else
+ARRAY[resource->>'fhirVersions']
+end as fhirVersions,
+resource->>'description' as description,
+resource->>'author' as author,
+resource->>'version' as version,
+resource->>'dependencies' as dependencies
+from _resources
+where resource->>'resourceType' = 'Package'
+)
+"])
 
-                                             (and (not (:resourceType x)) (:package-meta x))
-                                             (-> x
-                                                 (assoc :resourceType "FHIRSchema")
-                                                 (dissoc :package-meta)
-                                                 (assoc-in [:meta :package] acc))
-                                             :else nil)]
-                                   (when res
-                                     (.write w (cheshire.core/generate-string res))
-                                     (.write w "\n")
-                                     (.write aw (cheshire.core/generate-string res))
-                                     (.write aw "\n"))
-                                   acc)))))))))))
+  (pg/execute! ztx ["
+drop table if exists package_names;
 
+create table package_names as (
+select name, array_agg(version) as versions
+ from (select name, version from packages order by name, version) _
+ group by name
+ order by name
+)
 
-  (do
+"])
 
-    (def bid (BlobId/of "fhir-packages" "test.pkg/v0.0.5.ndjson.gz"))
+  (pg/execute! ztx ["CREATE EXTENSION IF NOT EXISTS pg_trgm; "])
 
-    (def binfo (BlobInfo/newBuilder bid))
-
-    ;; (.setContentEncoding binfo "gzip")
-    ;; (.setContentType binfo "application/gzip")
-
-    (.build binfo)
-    (def ch (.writer ^Storage storage ^BlobInfo (.build binfo) (into-array Storage$BlobWriteOption [])))
-
-    (def os (Channels/newOutputStream ch))
-    (def outz (GZIPOutputStream. os))
-    (def w (BufferedWriter. (OutputStreamWriter. outz)))
-
-    (dotimes [i 100]
-      (.write w (cheshire.core/generate-string {:resourceType "hello" :i i}))
-      (.write w "\n"))
-
-    (.close w)
-    (.close outz)
-    (.close os)
-    )
-
-
-  ;; writer.write(line);
-  ;; writer.write("\n");
-
+  (pg/execute! ztx ["create index package_names_name_trgrm on package_names USING gin (name gin_trgm_ops)"])
 
   )
-
