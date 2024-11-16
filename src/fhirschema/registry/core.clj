@@ -37,7 +37,7 @@
 (mk-query "a b")
 (mk-query "FHIR b")
 
-(defmethod rpc/op :get-package-lookup
+#_(defmethod rpc/op :get-package-lookup
   [ztx {params :query-params}]
   (println params)
   (let [q (mk-query (:name params))
@@ -45,6 +45,16 @@
         results (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100" q])]
     {:status 200
      :body results}))
+
+(defmethod rpc/op :get-package-lookup
+  [ztx {params :query-params :as req}]
+  (let [q (mk-query (:name params))]
+    (println :packages q params)
+    (http/stream
+     req
+     (fn [wr]
+       (pg/fetch ztx  ["select jsonb_build_object('name',name,'versions', versions) as res from package_names where name ilike ?" q]
+                 100 "res" (fn [res _i] (wr res)))))))
 
 (defmethod rpc/op :get-stream
   [ztx {params :query-params :as req}]
