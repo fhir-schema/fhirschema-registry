@@ -54,8 +54,10 @@
   )
 
 (defn parse-params [params encoding]
-  (let [params (codec/form-decode params encoding)]
+  (let [params (when params (reduce (fn [acc [k v]] (assoc acc (keyword k) v)) {} (codec/form-decode params encoding)))]
     (if (map? params) params {})))
+
+(parse-params "a=2%20;" "UTF-8")
 
 (defn dispatch [ztx {meth :request-method uri :uri :as req}]
   (cond

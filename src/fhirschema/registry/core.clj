@@ -27,16 +27,35 @@
   {:status 200
    :body (pg/execute! ztx ["select * from packages limit 10"])})
 
+(str/replace "fhir oups" #"\." "\\\\.")
+
+(defn mk-query [s]
+  (str "%" (-> (str/replace (str/trim (or s "")) #"\s+" "%")
+               (str/replace #"\." "\\\\."))
+       "%"))
+
+(mk-query "a b")
+(mk-query "FHIR b")
+
 (defmethod rpc/op :get-package-lookup
   [ztx {params :query-params}]
   (println params)
-  (let [results (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100"
-                                  (str "%" (-> (str/replace (str/trim (or (:name params) "")) #"\s+" "%")
-                                               (str/replace #"\." "\\.")))])]
+  (let [q (mk-query (:name params))
+        _ (println :q q )
+        results (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100" q])]
     {:status 200
      :body results}))
 
 
+(str/split "a:b"  #":")
+
+(defmethod rpc/op :get-fhirschema
+  [ztx {params :query-params}]
+  (let [[pkg v] (str/split (or (:package params) "") #":")
+        _ (println :schemas pkg v params)
+        results (pg/execute! ztx ["select resource from fhirschemas where package_name = ? and package_version = ?" pkg v])]
+    {:status 200
+     :body (mapv :resource results)}))
 
 (defn -main [& args]
   (println :args args)
@@ -61,7 +80,7 @@
   (from-json (slurp (:body @(cl/get "http://localhost:7777/Package?name=r4"))))
 
   (time
-   (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=fhir.r4")))))
+   (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20fhir%20core")))))
 
   (pg/execute! ztx ["select 1"])
   (pg/execute! ztx ["select name from packages where name ilike ? order by name limit 100" "%r4%"])
@@ -100,8 +119,35 @@ select name, array_agg(version) as versions
 
 "])
 
+  (pg/execute! ztx ["
+drop table if exists fhirschemas;
+drop index if exists fhirschemas_pkg;
+drop index if exists fhirschemas_url;
+create table fhirschemas as (
+select
+resource#>>'{meta,package,url}'     as package_name,
+resource#>>'{meta,package,version}' as package_version,
+resource->>'url' as url,
+resource->>'version' as version,
+resource as resource
+from _resources
+where resource->>'resourceType' = 'FHIRSchema'
+order by 1,2,3,4
+);
+create index fhirschemas_pkg on fhirschemas (package_name, package_version);
+create index fhirschemas_url on fhirschemas (url, version);
+"])
+
   (pg/execute! ztx ["CREATE EXTENSION IF NOT EXISTS pg_trgm; "])
 
   (pg/execute! ztx ["create index package_names_name_trgrm on package_names USING gin (name gin_trgm_ops)"])
+
+
+  (from-json (slurp (:body @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20core"))))
+
+  (time
+   (def s (from-json (slurp (:body @(cl/get "http://localhost:7777/FHIRSchema?package=hl7.fhir.r4.core:4.0.1"))))))
+
+  @(cl/get "http://localhost:7777/FHIRSchema?package=hl7.fhir.r4.core:4.0.1")
 
   )
