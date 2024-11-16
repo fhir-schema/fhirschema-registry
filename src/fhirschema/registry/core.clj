@@ -3,7 +3,8 @@
             [pg.core :as pg]
             [clojure.string :as str]
             [cheshire.core :as json]
-            [rpc]))
+            [rpc])
+  (:gen-class))
 
 (defn from-json [x]
   (json/parse-string x keyword))
@@ -36,7 +37,9 @@
      :body results}))
 
 
-(defn run []
+
+(defn -main [& args]
+  (println :args args)
   (def ztx (atom {}))
   (start ztx {:pg (json/parse-string (slurp "connection.json") keyword)
               :http {:port 8080}}))
