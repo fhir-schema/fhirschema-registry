@@ -73,8 +73,10 @@
     :else
     (let [query-params (parse-params (:query-string req) "UTF-8")]
       (if-let [op (resolve-operation meth uri)]
-        (update (rpc/op ztx (assoc (merge req op) :query-params query-params))
-                :body (fn [x] (when x (cheshire.core/generate-string x))))
+        (-> 
+         (update (rpc/op ztx (assoc (merge req op) :query-params query-params))
+                 :body (fn [x] (when x (cheshire.core/generate-string x))))
+         (assoc-in [:headers "content-type"] "application/json"))
         {:status 404}))))
 
 (defn start [ztx config]
