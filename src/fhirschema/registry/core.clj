@@ -241,4 +241,96 @@ order by package_name, package_version, url, resourceType, version
 
   (pg/execute! ztx ["select * from canonicals where package_name = 'hl7.fhir.r4.core'  order by resourceType, url limit 100"])
 
+  ;; elements
+  (pg/execute! ztx ["
+select
+resource#>'{meta,package}' as package,
+resource#>>'{url}' as url,
+el#>>'{binding,valueSet}' as vs_url,
+el#>>'{binding,strength}' as vs_strength,
+el->'type' as type,
+el->>'id' as id,
+el->>'path' as path,
+el - '{id,path,binding,type}'::text[] as rest
+from _resources,
+jsonb_array_elements(resource#>'{differential,element}') el
+where resource->>'resourceType' = 'StructureDefinition'
+limit 100"])
+
+  (pg/execute! ztx ["
+select
+resource
+from _resources
+where resource->>'resourceType' = 'ValueSet'
+limit 100"])
+
+  ;; todo do valueset analytics - calculate which could be enumerated
+
+
+  (pg/execute! ztx ["
+drop table if exists package_deps;
+create table package_deps AS (
+select
+resource#>>'{meta, package,url}' as name,
+resource#>>'{meta, package,version}' as version,
+substring(kv.key::text,2) as dep_name,
+kv.value::text as dep_version
+from _resources,
+jsonb_each_text(resource->'dependencies') as kv
+where resource->>'resourceType' = 'Package'
+order by name, version, dep_name, dep_version
+)
+"])
+
+  (pg/execute! ztx ["select name, version, count(*) from package_deps group by 1,2 order by 3 desc limit 10"])
+
+  (pg/execute! ztx ["select dep_name, dep_version, count(*) from package_deps group by 1,2  order by 3 desc limit 20"])
+
+  (pg/execute! ztx [
+                    "
+-- Recursive query to find all package dependencies with versions
+WITH RECURSIVE dep_tree AS (
+    -- Base case: direct dependencies
+    SELECT 
+        name,
+        version,
+        dep_name,
+        dep_version,
+        1 as depth,
+        ARRAY[name || '@' || version] as parents,
+        ARRAY[name || '@' || version, dep_name || '@' || dep_version] as dep_path
+    FROM package_deps
+    WHERE name = 'ch.fhir.ig.ch-etoc'  -- Starting package
+    AND version = '2.0.0'  -- Starting version
+    
+    UNION ALL
+    
+    -- Recursive case: dependencies of dependencies
+    SELECT 
+        pd.name,
+        pd.version,
+        pd.dep_name,
+        pd.dep_version,
+        dt.depth + 1,
+        dt.parents || (pd.name || '@' || pd.version),
+        dt.dep_path || (pd.dep_name || '@' || pd.dep_version)
+    FROM dep_tree dt
+    JOIN package_deps pd 
+        ON pd.name = dt.dep_name 
+        AND pd.version = dt.dep_version
+    WHERE NOT (pd.dep_name || '@' || pd.dep_version) = ANY(dt.dep_path)  -- Prevent cycles
+)
+SELECT 
+    dep_name as package,
+    dep_version as version,
+    array_agg(
+      distinct array_to_string(dep_path, ' -> ')
+    ) as dependency_paths
+FROM dep_tree
+group by 1,2
+ORDER BY dep_name;
+
+"])
+
+
   )
