@@ -46,7 +46,7 @@
     {:status 200
      :body results}))
 
-(defmethod rpc/op :get-package-lookup
+#_(defmethod rpc/op :get-package-lookup
   [ztx {params :query-params :as req}]
   (let [q (mk-query (:name params))]
     (println :packages q params)
@@ -56,7 +56,7 @@
        (pg/fetch ztx  ["select jsonb_build_object('name',name,'versions', versions) as res from package_names where name ilike ?" q]
                  100 "res" (fn [res _i] (wr res)))))))
 
-(defmethod rpc/op :get-stream
+(defmethod rpc/op :get-package-lookup
   [ztx {params :query-params :as req}]
   (let [q (mk-query (:name params))]
     (println :packages q params)
@@ -86,6 +86,21 @@
        req
        (fn [wr]
          (pg/fetch ztx  ["select resource as res  from fhirschemas where package_name = ? and package_version = ?" pkg v] 100 "res" (fn [res _i] (wr res))))))))
+
+
+(def canonicals-summary-sql
+  "select row_to_json(c.*) as res from canonicals c where package_name = ? and package_version = ?  order by resourceType, url")
+
+(defmethod rpc/op :get-canonicalresource-summary
+  [ztx {params :query-params :as req}]
+  (let [[pkg v] (str/split (or (:package params) "") #":")]
+    (println :schemas pkg v)
+    (if (and (not pkg) (not v))
+      {:status 422 :body {:message "Parameter name=<package>:<version> is required"}}
+      (http/stream
+       req
+       (fn [wr]
+         (pg/fetch ztx  [canonicals-summary-sql pkg v] 100 "res" (fn [res _i] (wr res))))))))
 
 (defn -main [& args]
   (println :args args)
@@ -175,8 +190,6 @@ create index fhirschemas_url on fhirschemas (url, version);
 
   (pg/execute! ztx ["select name, versions from package_names where name ilike ? order by name limit 100" "%fhir\\.r4%"])
 
-  
-
 
   @(cl/get "http://localhost:7777/Package/$lookup?name=hl7%20core")
 
@@ -188,5 +201,44 @@ create index fhirschemas_url on fhirschemas (url, version);
 
   @(cl/get "http://localhost:7777/stream?name=hl7")
 
+  @(cl/get "http://localhost:7777/CanonicalResource/$summary?package=hl7.fhir.r4.core:4.0.1")
+
+  (pg/execute! ztx ["
+select
+resource#>'{meta,package}' as pkg,
+resource->>'resourceType' as rt,
+count(*)
+from _resources
+group by 1, 2
+order by 1
+limit 10
+"])
+
+  (pg/execute! ztx ["
+drop table canonicals;
+create table canonicals AS (
+select
+resource#>>'{meta,package,url}' as package_name,
+resource#>>'{meta,package,version}' as package_version,
+resource->>'resourceType' as resourceType,
+resource->>'url' as url,
+resource->>'version' as version,
+resource->>'description' as description,
+jsonb_strip_nulls(jsonb_build_object(
+  'kind', resource->>'kind',
+  'type', resource->>'type',
+  'derivation', resource->>'derivation',
+  'base', resource->>'base'
+)) as extra
+from _resources
+order by package_name, package_version, url, resourceType, version
+)
+"])
+
+  (pg/execute! ztx ["create index canoninicals_package_idx on canonicals (package_name, package_version)"])
+
+
+
+  (pg/execute! ztx ["select * from canonicals where package_name = 'hl7.fhir.r4.core'  order by resourceType, url limit 100"])
 
   )
