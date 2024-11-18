@@ -102,6 +102,64 @@
        (fn [wr]
          (pg/fetch ztx  [canonicals-summary-sql pkg v] 100 "res" (fn [res _i] (wr res))))))))
 
+
+(def deps-sql
+  "
+-- Recursive query to find all package dependencies with versions
+WITH RECURSIVE dep_tree AS (
+    -- Base case: direct dependencies
+    SELECT
+        name,
+        version,
+        dep_name,
+        dep_version,
+        1 as depth,
+        ARRAY[name || '@' || version] as parents,
+        ARRAY[name || '@' || version, dep_name || '@' || dep_version] as dep_path
+    FROM package_deps
+    WHERE name = ?  -- Starting package
+    AND version = ?  -- Starting version
+    UNION ALL
+    -- Recursive case: dependencies of dependencies
+    SELECT
+        pd.name,
+        pd.version,
+        pd.dep_name,
+        pd.dep_version,
+        dt.depth + 1,
+        dt.parents || (pd.name || '@' || pd.version),
+        dt.dep_path || (pd.dep_name || '@' || pd.dep_version)
+    FROM dep_tree dt
+    JOIN package_deps pd 
+        ON pd.name = dt.dep_name 
+        AND pd.version = dt.dep_version
+    WHERE NOT (pd.dep_name || '@' || pd.dep_version) = ANY(dt.dep_path)  -- Prevent cycles
+)
+SELECT row_to_json(c.*) as res from (
+SELECT
+    dep_name as package,
+    dep_version as version,
+    array_agg(
+      distinct array_to_string(dep_path, ' -> ')
+    ) as dependency_paths
+FROM dep_tree
+group by 1,2
+ORDER BY dep_name
+) c
+
+")
+
+(defmethod rpc/op :get-package-deps
+  [ztx {params :query-params :as req}]
+  (let [[pkg v] (str/split (or (:package params) "") #":")]
+    (println :schemas pkg v)
+    (if (and (not pkg) (not v))
+      {:status 422 :body {:message "Parameter name=<package>:<version> is required"}}
+      (http/stream
+       req
+       (fn [wr] (pg/fetch ztx  [deps-sql pkg v] 100 "res" (fn [res _i] (wr res))))))))
+
+
 (defn -main [& args]
   (println :args args)
   (def ztx (atom {}))
@@ -197,6 +255,8 @@ create index fhirschemas_url on fhirschemas (url, version);
    (def s (from-json (slurp (:body @(cl/get "http://localhost:7777/FHIRSchema?package=hl7.fhir.r4.core:4.0.1"))))))
 
   @(cl/get "http://localhost:7777/FHIRSchema?package=hl7.fhir.r4.core:4.0.1")
+
+  @(cl/get "http://localhost:7777/Package/$deps?package=hl7.fhir.r4.core:4.0.1")
 
 
   @(cl/get "http://localhost:7777/stream?name=hl7")
@@ -302,11 +362,9 @@ WITH RECURSIVE dep_tree AS (
     FROM package_deps
     WHERE name = 'ch.fhir.ig.ch-etoc'  -- Starting package
     AND version = '2.0.0'  -- Starting version
-    
     UNION ALL
-    
     -- Recursive case: dependencies of dependencies
-    SELECT 
+    SELECT
         pd.name,
         pd.version,
         pd.dep_name,
