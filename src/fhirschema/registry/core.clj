@@ -301,11 +301,14 @@ order by package_name, package_version, url, resourceType, version
   (pg/execute! ztx ["select * from canonicals where package_name = 'hl7.fhir.r4.core'  order by resourceType, url limit 100"])
 
   ;; elements
-  (pg/execute! ztx ["
+  (do
+
+    (pg/execute! ztx ["
 drop table if exists elements;
 create table elements as (
 select
-resource#>'{meta,package}' as package,
+resource#>>'{meta,package,url}' as package_name,
+resource#>>'{meta,package,version}' as package_version,
 resource#>>'{url}' as url,
 el#>>'{binding,valueSet}' as vs_url,
 el#>>'{binding,strength}' as vs_strength,
@@ -321,8 +324,12 @@ where resource->>'resourceType' = 'StructureDefinition'
 )
 "])
 
-  (pg/execute! ztx ["create index elements_id_idx on elements USING gin (id gin_trgm_ops)"])
-  (pg/execute! ztx ["create index elements_path_idx on elements USING gin (path gin_trgm_ops)"])
+    (pg/execute! ztx ["create index elements_id_idx on elements USING gin (id gin_trgm_ops)"])
+    (pg/execute! ztx ["create index elements_path_idx on elements USING gin (path gin_trgm_ops)"])
+    (pg/execute! ztx ["create index elements_dep_idx on elements USING gin (package_name gin_trgm_ops)"])
+    )
+
+  (pg/execute! ztx ["select * from elements limit 10"])
 
   ;; todo do valueset analytics - calculate which could be enumerated
 
@@ -351,6 +358,27 @@ order by name, version, dep_name, dep_version
 
   (->> (pg/execute! ztx ["select package->>'url' as pkg, id, path, slicename from elements where path ilike '%[x]%' and slicename is not null limit 100"])
        (mapv (fn [x] [ (:pkg x) (:id x) (:path x) (:slicename x)])))
+
+  (->> (pg/execute! ztx ["
+select count(*) as cnt, package_name, slicing->'discriminator' as d
+from elements
+where slicing is not null
+and package_name ilike 'hl7.fhir.us.core'
+group by 2,3
+order by 1 desc
+ limit 1000"])
+       (mapv (fn [x] [(:cnt x) (:package_name x) (:d x)])))
+
+[[203 "hl7.fhir.us.core" [{:path "$this", :type "pattern"}]]
+ [31 "hl7.fhir.us.core"  [{:path "code", :type "pattern"}]]
+ [25 "hl7.fhir.us.core"  [{:path "type", :type "pattern"}]]
+ [14 "hl7.fhir.us.core"  [{:path "url", :type "value"}]]
+ [12 "hl7.fhir.us.core"  [{:path "coding.code", :type "value"} {:path "coding.system", :type "value"}]]
+ [7 "hl7.fhir.us.core"   [{:path "code", :type "value"} {:path "system", :type "value"}]]
+ [2 "hl7.fhir.us.core"   [{:path "system", :type "value"}]]
+ [1 "hl7.fhir.us.core"   [{:path "$this", :type "type"}]]
+ [1 "hl7.fhir.us.core"   [{:path "code.coding", :type "pattern"}]]]
+
 
 
   (pg/execute! ztx [

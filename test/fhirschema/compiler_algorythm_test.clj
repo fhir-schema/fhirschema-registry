@@ -35,13 +35,13 @@
         (let [pi (nth prev-path (dec i))
               ni (nth new-path (dec i))]
           (if (and (:sliceName pi) (:sliceName ni) (not (= (:sliceName pi) (:sliceName ni))))
-            (conj exits {:type :exit-slice :sliceName (:sliceName pi)})
+            (conj exits {:type :exit-slice :sliceName (:sliceName pi) :slicing (:slicing pi)})
             exits))
         exits)
       (recur (dec i)
              (let [pi (nth prev-path (dec i))]
                (-> exits
-                   (cond-> (:sliceName pi) (conj {:type :exit-slice :sliceName (:sliceName pi)}))
+                   (cond-> (:sliceName pi) (conj {:type :exit-slice :sliceName (:sliceName pi) :slicing (:slicing pi)}))
                    (conj {:type :exit :el (:el pi)})))))))
 
 ;; TBD: tidy
@@ -75,10 +75,19 @@
         prev-prev-stack (pop prev-stack)]
     (conj prev-prev-stack (update-fn last-v peek-v))))
 
+(defn build-slice [{ sn :sliceName  sl :slicing} last-v peek-v]
+  (let [match (->> (:discriminator sl)
+                   (reduce (fn [match {tp :type p :path}]
+                             (let [pattern-p (mapv keyword (str/split p #"\."))
+                                   pp (into [:elements] (interpose :elements pattern-p))
+                                   v  (get-in peek-v (conj pp :pattern))]
+                               (assoc-in match pattern-p (:value v)))) {}))]
+    (assoc-in last-v [:slicing :slices (keyword sn)] (assoc peek-v :match match))))
+
 (defn apply-actions [value-stack actions value]
   (->> actions
        (reduce
-        (fn [stack {tp :type el :el sn :sliceName}]
+        (fn [stack {tp :type el :el sn :sliceName  sl :slicing :as item}]
           ;; (println :? tp (or el sn)) (doseq [x (reverse stack)] (println "  " :* x))
           (case tp
             :enter
@@ -90,8 +99,9 @@
             :exit
             (pop-and-update stack (fn [last-v peek-v] (assoc-in last-v [:elements el] peek-v)))
 
+           ;; FOCUS
             :exit-slice
-            (pop-and-update stack (fn [last-v peek-v] (assoc-in last-v [:slicing :slices (keyword sn)] peek-v)))))
+            (pop-and-update stack (fn [last-v peek-v] (build-slice item last-v peek-v)))))
         value-stack)))
 
 
@@ -113,6 +123,17 @@
          (mapv (fn [{c :code :as tp}] (assoc e :path (str prefix (capitalize c)) :type tp)))
          (into [(assoc e :path prefix)]))))
 
+(defn process-element [e]
+  (->> (dissoc e :path :slicing :sliceName)
+       (reduce
+        (fn [acc [k v]]
+          (if (str/starts-with? (name k) "pattern")
+            (assoc acc :pattern {:type (str/replace (name k) #"^pattern" "") :value v})
+            (assoc acc k v)))
+        {})))
+
+(process-element {:patternString "a"})
+
 (defn build [els]
   (loop [value-stack [{}]
          prev-path EMPTY_PATH
@@ -124,10 +145,11 @@
       (let [e (first els)]
         (if (choice? e)
           (recur value-stack prev-path (into (union-elements e) (rest els)))
-          (let [new-path (enrich-path prev-path (parse-path (:path e) e))
-                actions (calculate-actions prev-path new-path)
-                new-value-stack (apply-actions value-stack actions (dissoc e :path :slicing :sliceName))]
+          (let [new-path        (enrich-path prev-path (parse-path (:path e) e))
+                actions         (calculate-actions prev-path new-path)
+                new-value-stack (apply-actions value-stack actions (process-element e))]
             (recur new-value-stack new-path (rest els))))))))
+
 
 
 (deftest test-algorythm
@@ -179,7 +201,6 @@
     {:type :exit-slice, :sliceName "s1"}
     {:type :exit, :el :a}])
 
-  ;; FOCUS
   (calculate-actions
    [{:sliceName :s1, :el :x} {:el :b}]
    [{:sliceName :s1, :el :x} {:el :b, :sliceName :z1}]
@@ -193,14 +214,15 @@
      {:path "c.d.f" :type :c.d.f}
      {:path "c.d.i" :type :c.d.i}
      {:path "x" :type :x}
-     {:path "x" :slicing {}}
+     {:path "x" :slicing {:discriminator [{:type "pattern" :path "a"}]}}
      {:path "x" :sliceName "s1"}
-     {:path "x.a" :type :x.s1.a}
+     {:path "x.a" :type :x.s1.a :patternString "s1"}
      {:path "x.b" :type :x.s1.b}
      {:path "x" :sliceName "s2"}
-     {:path "x.a" :type :x.s2.a}
+     {:path "x.a" :type :x.s2.a :patternString "s2"}
      {:path "x.b" :type :x.s2.b}])
 
+  ;; FOCUS
   (matcho/match
    (build els)
    {:elements
@@ -211,24 +233,26 @@
                         :elements {:f {:type :c.d.f}
                                    :i {:type :c.d.i}}}}},
      :x {:type :x,
-         :slicing {:slices {:s1 {:elements {:a {:type :x.s1.a}
+         :slicing {:slices {:s1 {:match {:a "s1"}
+                                 :elements {:a {:type :x.s1.a}
                                             :b {:type :x.s1.b}}}
-                            :s2 {:elements {:a {:type :x.s2.a}
+                            :s2 {:match {:a "s2"}
+                                 :elements {:a {:type :x.s2.a}
                                             :b {:type :x.s2.b}}}}}}}})
 
   (def els2
     [{:path "x" :type :x}
-     {:path "x" :sliceName "s1"}
-     {:path "x.a" :type :x.s1.a}
-     {:path "x.b" :type :x.s1.b}
+     {:path "x" :sliceName "s1" :slicing {:discriminator [{:type "pattern" :path "a"}]}}
+     {:path "x.a" :type :x.s1.a :patternString "s1"}
+     {:path "x.b" :type :x.s1.b :slicing {:discriminator [{:type "pattern" :path "f.ff"}]}}
      {:path "x.b" :sliceName "z1"}
      {:path "x.b.f" :type :x.s1.b.z1.f}
-     {:path "x.b.f.ff" :type :x.s1.b.z1.ff}
+     {:path "x.b.f.ff" :type :x.s1.b.z1.ff :patternCoding {:code "z1"}}
      {:path "x.b" :sliceName "z2"}
      {:path "x.b.f" :type :x.s1.b.z2.f}
-     {:path "x.b.f.ff" :type :x.s1.b.z2.ff}
+     {:path "x.b.f.ff" :type :x.s1.b.z2.ff :patternCoding {:code "z2"}}
      {:path "x" :sliceName "s2"}
-     {:path "x.a" :type :x.s2.a}
+     {:path "x.a" :type :x.s2.a :patternString "s2"}
      {:path "x.b" :type :x.s2.b}
      {:path "z" :type :z}])
 
@@ -240,13 +264,17 @@
          :slicing
          {:slices
           {:s1
-           {:elements
+           {:match {:a "s1"}
+            :elements
             {:a {:type :x.s1.a},
              :b {:type :x.s1.b,
                  :slicing {:slices
-                           {:z1 {:elements {:f {:type :x.s1.b.z1.f, :elements {:ff {:type :x.s1.b.z1.ff}}}}},
-                            :z2 {:elements {:f {:type :x.s1.b.z2.f, :elements {:ff {:type :x.s1.b.z2.ff}}}}}}}}}},
-           :s2 {:elements {:a {:type :x.s2.a}, :b {:type :x.s2.b}}}}}}}})
+                           {:z1 {:match {:f {:ff {:code "z1"}}}
+                                 :elements {:f {:type :x.s1.b.z1.f, :elements {:ff {:type :x.s1.b.z1.ff}}}}},
+                            :z2 {:match {:f {:ff {:code "z2"}}}
+                                 :elements {:f {:type :x.s1.b.z2.f, :elements {:ff {:type :x.s1.b.z2.ff}}}}}}}}}},
+           :s2 {:match {:a "s2"}
+                :elements {:a {:type :x.s2.a}, :b {:type :x.s2.b}}}}}}}})
 
   (def union-els
     [{:path "value[x]" :type [{:code "string"} {:code "Quantity"}]}
