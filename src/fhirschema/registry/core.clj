@@ -379,6 +379,15 @@ order by 1 desc
  [1 "hl7.fhir.us.core"   [{:path "$this", :type "type"}]]
  [1 "hl7.fhir.us.core"   [{:path "code.coding", :type "pattern"}]]]
 
+(->> (pg/execute! ztx ["
+select distinct type
+from elements
+where slicing#>>'{discriminator,0,path}' = '$this'
+and package_name ilike 'hl7.fhir.us.core'
+ limit 10"])
+     (mapv (fn [x] x)))
+
+[{:type ({:code "CodeableConcept"})} {:type ({:code "Identifier"})} {:type nil}]
 
 
   (pg/execute! ztx [
