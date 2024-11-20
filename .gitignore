@@ -3,3 +3,5 @@
 connection.json
 resources.ndjson.gz
 packages.ndjson.gz
+tmp
+.DS_Store

@@ -1,0 +1,15 @@
+hl7.fhir.r3.core
+hl7.fhir.r4.core
+hl7.fhir.r4b.core
+hl7.fhir.r5.core
+hl7.fhir.r6.core
+hl7.fhir.us.codex-radiation-therapy
+hl7.fhir.us.core
+hl7.fhir.us.mcode
+hl7.fhir.uv.extensions
+hl7.fhir.uv.sdc
+hl7.fhir.uv.smart-app-launch"
+hl7.terminology
+hl7.terminology.r4
+us.cdc.phinvads
+us.nlm.vsac

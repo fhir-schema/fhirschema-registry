@@ -298,11 +298,12 @@ order by package_name, package_version, url, resourceType, version
   (pg/execute! ztx ["create index canoninicals_package_idx on canonicals (package_name, package_version)"])
 
 
-
   (pg/execute! ztx ["select * from canonicals where package_name = 'hl7.fhir.r4.core'  order by resourceType, url limit 100"])
 
   ;; elements
   (pg/execute! ztx ["
+drop table if exists elements;
+create table elements as (
 select
 resource#>'{meta,package}' as package,
 resource#>>'{url}' as url,
@@ -311,18 +312,17 @@ el#>>'{binding,strength}' as vs_strength,
 el->'type' as type,
 el->>'id' as id,
 el->>'path' as path,
-el - '{id,path,binding,type}'::text[] as rest
+el->>'sliceName' as sliceName,
+el->'slicing' as slicing,
+el - '{id,path,binding,type, sliceName, slicing}'::text[] as rest
 from _resources,
 jsonb_array_elements(resource#>'{differential,element}') el
 where resource->>'resourceType' = 'StructureDefinition'
-limit 100"])
+)
+"])
 
-  (pg/execute! ztx ["
-select
-resource
-from _resources
-where resource->>'resourceType' = 'ValueSet'
-limit 100"])
+  (pg/execute! ztx ["create index elements_id_idx on elements USING gin (id gin_trgm_ops)"])
+  (pg/execute! ztx ["create index elements_path_idx on elements USING gin (path gin_trgm_ops)"])
 
   ;; todo do valueset analytics - calculate which could be enumerated
 
@@ -346,12 +346,19 @@ order by name, version, dep_name, dep_version
 
   (pg/execute! ztx ["select dep_name, dep_version, count(*) from package_deps group by 1,2  order by 3 desc limit 20"])
 
+  (->> (pg/execute! ztx ["select package->>'url' as pkg, id, path, slicename from elements where id ilike '%:%:%:%' and slicename is not null limit 100"])
+       (mapv (fn [x] [ (:pkg x) (:id x) (:path x) (:slicename x)])))
+
+  (->> (pg/execute! ztx ["select package->>'url' as pkg, id, path, slicename from elements where path ilike '%[x]%' and slicename is not null limit 100"])
+       (mapv (fn [x] [ (:pkg x) (:id x) (:path x) (:slicename x)])))
+
+
   (pg/execute! ztx [
                     "
 -- Recursive query to find all package dependencies with versions
 WITH RECURSIVE dep_tree AS (
     -- Base case: direct dependencies
-    SELECT 
+    SELECT
         name,
         version,
         dep_name,
@@ -373,12 +380,12 @@ WITH RECURSIVE dep_tree AS (
         dt.parents || (pd.name || '@' || pd.version),
         dt.dep_path || (pd.dep_name || '@' || pd.dep_version)
     FROM dep_tree dt
-    JOIN package_deps pd 
-        ON pd.name = dt.dep_name 
+    JOIN package_deps pd
+        ON pd.name = dt.dep_name
         AND pd.version = dt.dep_version
     WHERE NOT (pd.dep_name || '@' || pd.dep_version) = ANY(dt.dep_path)  -- Prevent cycles
 )
-SELECT 
+SELECT
     dep_name as package,
     dep_version as version,
     array_agg(
@@ -389,6 +396,45 @@ group by 1,2
 ORDER BY dep_name;
 
 "])
+  (pg/execute! ztx ["
+create index _resource_package_idx on _resources (
+  (resource#>>'{meta,package,url}'),
+  (resource#>>'{meta,package,version}')
+) "])
 
+  (pg/execute! ztx ["
+create index _resource_package_name_idx on _resources
+USING gin (
+  (resource#>>'{meta,package,url}') gin_trgm_ops
+)"])
+
+
+
+
+  (pg/execute! ztx ["
+select
+--resource#>'{meta,package}' as pkg,
+--resource->'url' as url,
+--resource
+distinct resource->'resourceType'
+from _resources
+where
+--resource->>'resourceType' = 'CodSystem' and
+resource#>>'{meta,package,url}' = 'hl7.fhir.r4.core'
+--and resource->>'url' = 'http://terminology.hl7.org/ValueSet/v3-AdministrativeGender'
+"])
+
+  (-> (pg/execute! ztx ["
+select
+resource
+from _resources
+where
+resource->>'resourceType' = 'FHIRSchema' and
+resource#>>'{meta,package,url}' = 'hl7.fhir.r4.core'
+and resource->>'name' ='Questionnaire'
+"])
+      first
+      :resource
+      )
 
   )

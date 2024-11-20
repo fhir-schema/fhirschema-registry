@@ -17,11 +17,16 @@
         ring/ring                                   {:mvn/version "1.10.0"}
         ring/ring-defaults                          {:mvn/version "0.3.4"}
 
+        org.apache.commons/commons-compress         {:mvn/version "1.26.0"}
+
         healthsamurai/dsql                          {:git/url "https://github.com/HealthSamurai/dsql.git"
                                                      :sha "7e1564ee0bc24ca3fd6a3ddd39b6ddb93becfcde"}
 
         hiccup/hiccup               {:mvn/version "1.0.5"}
         garden/garden               {:mvn/version "1.3.10"}
+
+        healthsamurai/matcho          {:mvn/version "0.3.8"}
+
         }
 
  :aliases
