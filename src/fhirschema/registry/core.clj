@@ -379,16 +379,6 @@ order by 1 desc
  [1 "hl7.fhir.us.core"   [{:path "$this", :type "type"}]]
  [1 "hl7.fhir.us.core"   [{:path "code.coding", :type "pattern"}]]]
 
-(->> (pg/execute! ztx ["
-select distinct type
-from elements
-where slicing#>>'{discriminator,0,path}' = '$this'
-and package_name ilike 'hl7.fhir.us.core'
- limit 10"])
-     (mapv (fn [x] x)))
-
-[{:type ({:code "CodeableConcept"})} {:type ({:code "Identifier"})} {:type nil}]
-
 
   (pg/execute! ztx [
                     "
@@ -473,5 +463,43 @@ and resource->>'name' ='Questionnaire'
       first
       :resource
       )
+
+(->> (pg/execute! ztx ["
+select distinct type
+from elements
+where slicing#>>'{discriminator,0,path}' = '$this'
+and package_name ilike 'hl7.fhir.us.core'
+ limit 10"])
+     (mapv (fn [x] x)))
+
+(->> (pg/execute! ztx ["
+select *
+from elements
+where slicing#>>'{discriminator,0,path}' = '$this'
+and package_name ilike 'hl7.fhir.us.core'
+ limit 10"])
+     (mapv (fn [x] x)))
+
+[{:type ({:code "CodeableConcept"})} {:type ({:code "Identifier"})} {:type nil}]
+
+(->> (pg/execute! ztx ["
+select *
+from elements
+where slicing#>>'{discriminator,0,path}' = '$this'
+and type is null
+and package_name ilike 'hl7.fhir.us.core'
+ limit 10"])
+     (mapv (fn [x] x)))
+
+(->> (pg/execute! ztx ["
+select *
+from elements
+where
+id ilike '%\\.extension%extension%'
+and package_name ilike 'hl7.fhir.us.core'
+order by path
+ limit 1000"])
+     (mapv (fn [x] [(:url x) (:id x) (:path x)])))
+
 
   )
