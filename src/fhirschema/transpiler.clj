@@ -64,6 +64,12 @@
       (if py (into cp p2) (into cp pxy))
       (recur pxs pxy (conj cp (merge (select-keys px [:slicing :sliceName]) py ))))))
 
+(defn slice-changed? [pi ni]
+  (and (:sliceName pi) (:sliceName ni) (not (= (:sliceName pi) (:sliceName ni)))))
+
+(defn exit-slice-action [pi]
+  {:type :exit-slice :sliceName (:sliceName pi) :slicing (:slicing pi) :slice (:slice pi)})
+
 ;; TBD: tidy
 (defn calculate-exits [prev-c cp-c prev-path new-path]
   (loop [i prev-c exits []]
@@ -71,14 +77,14 @@
       (if (< 0 i)
         (let [pi (nth prev-path (dec i))
               ni (nth new-path (dec i))]
-          (if (and (:sliceName pi) (:sliceName ni) (not (= (:sliceName pi) (:sliceName ni))))
-            (conj exits {:type :exit-slice :sliceName (:sliceName pi) :slicing (:slicing pi) :slice (:slice pi)})
+          (if (slice-changed? pi ni)
+            (conj exits (exit-slice-action pi))
             exits))
         exits)
       (recur (dec i)
              (let [pi (nth prev-path (dec i))]
                (-> exits
-                   (cond-> (:sliceName pi) (conj {:type :exit-slice :sliceName (:sliceName pi) :slicing (:slicing pi) :slice (:slice pi)}))
+                   (cond-> (:sliceName pi) (conj (exit-slice-action pi)))
                    (conj {:type :exit :el (:el pi)})))))))
 
 ;; TBD: tidy
@@ -135,7 +141,7 @@
     (assoc :min (:min slice))
 
     (and (:min slice) (> (:min slice) 1))
-    (assoc :required true)
+    (assoc :_required true)
 
     (:max slice)
     (assoc :max (:max slice))))
@@ -155,7 +161,14 @@
                                      schema)))
                {})))
 
-(defn debug-item [item stack]
+(defn add-element [el last-v peek-v]
+  (->
+   (if (= :extension el)
+     (assoc-in last-v [:extensions] (slicing-to-extensions peek-v))
+     (assoc-in last-v [:elements el] (dissoc peek-v :_required)))
+   (cond-> (:_required peek-v) (update :required (fn [x] (conj (or x #{}) (name el)))))))
+
+(defn debug-action [item stack]
   (println :> item)
   (doseq [x (reverse stack)]
     (println "  |-----------------------------------")
@@ -165,28 +178,17 @@
           (str/join "\n"))))
   (println "  |-----------------------------------"))
 
+
 (defn apply-actions [value-stack actions value]
   (->> actions
        (reduce
-        (fn [stack {tp :type el :el sn :sliceName  sl :slicing :as item}]
-          #_(debug-item item stack)
+        (fn [stack {tp :type el :el :as action}]
+          #_(debug-action action stack)
           (case tp
-            :enter
-            (conj stack value)
-
-            :enter-slice
-            (conj stack value)
-
-            :exit
-            (pop-and-update
-             stack
-             (fn [last-v peek-v]
-               (if (= :extension el)
-                 (assoc-in last-v [:extensions] (slicing-to-extensions peek-v))
-                 (assoc-in last-v [:elements el] peek-v))))
-
-            :exit-slice
-            (pop-and-update stack (fn [last-v peek-v] (build-slice item last-v peek-v)))))
+            :enter       (conj stack value)
+            :enter-slice (conj stack value)
+            :exit        (pop-and-update stack (fn [last-v peek-v] (add-element el last-v peek-v)))
+            :exit-slice  (pop-and-update stack (fn [last-v peek-v] (build-slice action last-v peek-v)))))
         value-stack)))
 
 
@@ -226,18 +228,25 @@
             :else (assoc acc k v)))
         {})))
 
+(defn base-profile? [tp]
+  (re-matches #"http://hl7.org/fhir/StructureDefinition/[a-zA-Z]+" tp))
+
+(defn build-refers [tps]
+  (->> tps
+       (mapcat
+        (fn [{tp :targetProfile :as item}]
+          (when tp
+            (->> (if (vector? tp) tp [tp])
+                 (mapv (fn [tp]
+                         (assert (string? tp) [tp item])
+                         (if (base-profile? tp)
+                           {:resource (last (str/split tp #"/"))}
+                           {:profile tp})))))))))
+
 (defn preprocess-element [e]
   (let [tp (get-in e [:type 0 :code])]
     (cond (= tp "Reference")
-          (let [refers (->> (:type e)
-                            (mapcat (fn [{tp :targetProfile :as item}]
-                                      (when tp
-                                        (->> (if (vector? tp) tp [tp])
-                                             (mapv (fn [tp]
-                                                     (assert (string? tp) [tp item])
-                                                     (if (re-matches #"http://hl7.org/fhir/StructureDefinition/[a-zA-Z]+" tp)
-                                                       {:resource (last (str/split tp #"/"))}
-                                                       {:profile tp}))))))))]
+          (let [refers (build-refers (:type e))]
             (cond-> (assoc e :type [{:code "Reference"}])
               (seq refers) (assoc :refers refers)))
           :else e)))
@@ -250,30 +259,42 @@
 (defn build-element-constraings [e]
   (cond-> e
     (:constraint e)
-    (update :constraint
-            (fn [cs] (->> cs (reduce (fn [acc {k :key :as c}] (assoc acc k (dissoc c :key :xpath))) {}))))))
+    (update
+     :constraint
+     (fn [cs]
+       (->> cs
+            (reduce (fn [acc {k :key :as c}]
+                      (assoc acc k (dissoc c :key :xpath)))
+                    {}))))))
+
+(defn parse-max [{mx :max :as _e}]
+  (when (and mx (not (= "*" mx)))
+    (parse-int mx)))
+
+(defn parse-min [{mn :min :as _e}]
+  (when (and mn (> mn 0))
+    mn))
 
 (defn build-element-extension [e]
-   (let [tp (get-in e [:type 0 :code])
-          ext-url (when (= tp "Extension")
-                    #_(assert (= 1 (count (get-in e [:type 0 :profile]))) (str e))
-                    (get-in e [:type 0 :profile 0]))
-          mn (:min e)
-          mx (and (:max e) (not (= "*" (:max e))) (parse-int (:max e)))]
-     (->  e
-          (cond-> ext-url (cond-> mn (assoc :min mn) mx (assoc :max mx)) )
-          (cond-> ext-url (assoc :url ext-url)))))
+  (let [tp (get-in e [:type 0 :code])
+        ext-url (when (= tp "Extension") (get-in e [:type 0 :profile 0]))
+        mn (parse-min e)
+        mx (parse-max e)]
+    (if-not ext-url
+      e
+      (cond-> (assoc e :url ext-url)
+        mn (assoc :min mn)
+        mx (assoc :max mx)))))
 
 (defn build-element-cardinality [e]
-  (let [mn (:min e)
-        mx (and (:max e) (not (= "*" (:max e))) (parse-int (:max e)))]
+  (let [mn (parse-min e) mx (parse-max e)]
     (cond-> (dissoc e :min :max)
       (not (:url e))
       (cond->
           (array-element? e)    (-> (assoc :array true)
-                                    (cond-> mn  (assoc :min mn)
+                                    (cond-> mn (assoc :min mn)
                                             mx  (assoc :max mx)))
-          (required-element? e) (assoc :required true)))))
+          (required-element? e) (assoc :_required true)))))
 
 (defn build-element-type [e]
   (assert (<= (count (get-in e [:type])) 1) (pr-str e))
@@ -295,6 +316,22 @@
       build-element-type
       process-patterns))
 
+
+(defn build-resource-header [structure-definition]
+  (-> (select-keys structure-definition [:name :type :url :version :base])
+      (cond-> (:baseDefinition structure-definition) (assoc :base (:baseDefinition structure-definition)))
+      (cond-> (:abstract structure-definition) (assoc :abstract true))
+      (assoc :class
+             (cond
+               (and (= "resource" (:kind structure-definition)) (= "constraint" (:derivation structure-definition))) "profile"
+               (= "Extension" (:type structure-definition)) "extension"
+               :else (or (:kind structure-definition) "unknown")))))
+
+(defn get-differential [structure-definition]
+  (->> (get-in structure-definition [:differential :element])
+       (filterv (fn [{p :path}] (str/includes? p ".")))))
+
+
 ;; TODO: context {elements for elements, elements for resoruce}
 ;; TODO: discriminator [50%]
 ;; TODO: array and scalar only for resources or logical models
@@ -309,21 +346,14 @@
 ;; 4 apply actions
 
 (defn translate [structure-definition]
-  (let [res (-> (select-keys structure-definition [:name :type :url :version :base])
-                (cond-> (:baseDefinition structure-definition) (assoc :base (:baseDefinition structure-definition)))
-                (cond-> (:abstract structure-definition) (assoc :abstract true))
-                (assoc :class
-                       (cond
-                         (and (= "resource" (:kind structure-definition)) (= "constraint" (:derivation structure-definition))) "profile"
-                         (= "Extension" (:type structure-definition)) "extension"
-                         :else (or (:kind structure-definition) "unknown"))))]
+  (let [res (build-resource-header structure-definition)]
     (loop [value-stack [res]
            prev-path EMPTY_PATH
-           els (->> (get-in structure-definition [:differential :element])
-                    (filterv (fn [{p :path}] (str/includes? p "."))))]
+           els (get-differential structure-definition)]
       (if (empty? els)
         (let [actions (calculate-actions prev-path EMPTY_PATH)
               new-value-stack (apply-actions value-stack actions {})]
+          (assert (= 1 (count new-value-stack)))
           (first new-value-stack))
         (let [e (first els)]
           (if (choice? e)

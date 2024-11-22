@@ -110,11 +110,13 @@
 
   (matcho/match
    (translate {:differential {:element [{:path "A.x" :min 1 :max "*"}]}})
-   {:elements {:x {:array true, :required true :min 1 :max nil?}}})
+   {:required #{"x"}
+    :elements {:x {:array true, :min 1 :max nil?}}})
 
   (matcho/match
    (translate {:differential {:element [{:path "A.x" :min 1 :max "10"}]}})
-   {:elements {:x {:array true, :required true :min 1 :max 10}}})
+   {:required #{"x"}
+    :elements {:x {:array true, :_required nil? :min 1 :max 10}}})
 
 
   (matcho/match
@@ -166,10 +168,10 @@
         :patternCodeableConcept {:coding [{:system "CodeSystem", :code "LAB"}]}, :mustSupport true}
        {:path "R.category", :sliceName "Radiologylice", :min 4, :max "5",
         :patternCodeableConcept {:coding [{:system "CodeSystem", :code "RAD"}]}, :mustSupport true}]}})
-   {:elements
+   {:required #{"category"}
+    :elements
     {:category
      {:mustSupport true,
-      :required true,
       :min 1 :max 10
       :slicing
       {:discriminator [{:type "pattern", :path "$this"}]
@@ -177,13 +179,13 @@
        :slices
        {:LaboratorySlice
         {:schema {:pattern {:type "CodeableConcept", :value {:coding [{:system "CodeSystem", :code "LAB"}]}}, :mustSupport true}
-         :required true,
+         :_required true,
          :min 2 :max 3
          :match {:coding [{:system "CodeSystem", :code "LAB"}]}},
 
         :Radiologylice
         {:schema {:pattern {:type "CodeableConcept", :value {:coding [{:system "CodeSystem", :code "RAD"}]}}, :mustSupport true}
-         :required true,
+         :_required true,
          :min 4 :max 5
          :match {:coding [{:system "CodeSystem", :code "RAD"}]}}}}}}})
 
@@ -329,38 +331,36 @@
       }})
    {:type "Extension",
     :class "extension",
+    :required #{"url" "extension"}
     :extensions
     {:ombCategory {:url "ombCategory",
                    :type "Extension",
+                   :required #{"url" "value" "valueCoding"}
                    :elements {
                               ;; TODO: better to remove
-                              :url {:type "uri", :pattern {:type "Uri", :value "ombCategory"}, :required true},
+                              :url {:type "uri", :pattern {:type "Uri", :value "ombCategory"}},
                               :value {:binding {:strength "required", :valueSet "http://hl7.org/fhir/us/core/ValueSet/omb-ethnicity-category"},
-                                      :choices ["valueCoding"],
-                                      :required true},
+                                      :choices ["valueCoding"]}
                               :valueCoding {:type "Coding",
                                             :binding {:strength "required", :valueSet "http://hl7.org/fhir/us/core/ValueSet/omb-ethnicity-category"},
-                                            :choiceOf "value",
-                                            :required true}}},
+                                            :choiceOf "value"}}}
      :detailed {:url "detailed",
                 :type "Extension",
                 :array true,
                 :min 0,
-                :elements {:value {:binding {:strength "required",
-                                             :valueSet "http://hl7.org/fhir/us/core/ValueSet/detailed-ethnicity"},
-                                   :choices ["valueCoding"],
-                                   :required true},
+                :required #{"url" "value" "valueCoding"}
+                :elements {:value {:binding {:strength "required", :valueSet "http://hl7.org/fhir/us/core/ValueSet/detailed-ethnicity"},
+                                   :choices ["valueCoding"]},
                            :valueCoding {:type "Coding",
                                          :binding {:strength "required", :valueSet "http://hl7.org/fhir/us/core/ValueSet/detailed-ethnicity"},
-                                         :choiceOf "value",
-                                         :required true}}},
+                                         :choiceOf "value",}}},
      :text {:url "text",
             :type "Extension",
-            :required true,
-            :elements {:url {:type "uri", :pattern {:type "Uri", :value "text"}, :required true},
-                       :value {:choices ["valueString"], :required true},
-                       :valueString {:type "string", :choiceOf "value", :required true}}}},
-    :elements {:url {:pattern {:type "Uri", :value "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity"}, :required true},
+            :required #{"url" "value" "valueString"}
+            :elements {:url {:type "uri", :pattern {:type "Uri", :value "text"}},
+                       :value {:choices ["valueString"]},
+                       :valueString {:type "string", :choiceOf "value"}}}},
+    :elements {:url {:pattern {:type "Uri", :value "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity"}},
                :value {:choices []}}}
    )
 
