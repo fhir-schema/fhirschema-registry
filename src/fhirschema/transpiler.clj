@@ -1,5 +1,6 @@
 (ns fhirschema.transpiler
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clj-yaml.core]))
 
 (defn required-element?
   [element]
@@ -17,7 +18,6 @@
   (or (= "*" (:max element))
       (and (:min element) (>= (:min element) 2))
       (and (:max element) (>= (coerce-element-max-cardinality (:max element)) 2))))
-
 
 (defn parse-int [x]
   (try (Integer/parseInt x)
@@ -155,20 +155,21 @@
                                      schema)))
                {})))
 
+(defn debug-item [item stack]
+  (println :> item)
+  (doseq [x (reverse stack)]
+    (println "  |-----------------------------------")
+    (println
+     (->> (str/split (clj-yaml.core/generate-string x) #"\n")
+          (mapv (fn [x] (str "  | " x)))
+          (str/join "\n"))))
+  (println "  |-----------------------------------"))
+
 (defn apply-actions [value-stack actions value]
   (->> actions
        (reduce
         (fn [stack {tp :type el :el sn :sliceName  sl :slicing :as item}]
-          #_(do
-              (require '[clj-yaml.core])
-              (println :? item)
-              (doseq [x (reverse stack)]
-                (println "  |-----------------------------------")
-                (println
-                 (->> (str/split (clj-yaml.core/generate-string x) #"\n")
-                      (mapv (fn [x] (str "  | " x)))
-                      (str/join "\n"))))
-              (println "  |-----------------------------------"))
+          #_(debug-item item stack)
           (case tp
             :enter
             (conj stack value)
@@ -183,7 +184,7 @@
                (if (= :extension el)
                  (assoc-in last-v [:extensions] (slicing-to-extensions peek-v))
                  (assoc-in last-v [:elements el] peek-v))))
-           ;; FOCUS
+
             :exit-slice
             (pop-and-update stack (fn [last-v peek-v] (build-slice item last-v peek-v)))))
         value-stack)))
@@ -241,45 +242,81 @@
               (seq refers) (assoc :refers refers)))
           :else e)))
 
-(defn build-element [e]
-  (let [e (preprocess-element e)]
-    (assert (<= (count (get-in e [:type])) 1) (pr-str e))
-    (let [tp (get-in e [:type 0 :code])
+(defn build-element-binding [e]
+  (cond-> e
+    (and (:binding e) (not (= "example" (get-in e [:binding :strength]))))
+    (assoc :binding (select-keys (:binding e) [:strength :valueSet]))))
+
+(defn build-element-constraings [e]
+  (cond-> e
+    (:constraint e)
+    (update :constraint
+            (fn [cs] (->> cs (reduce (fn [acc {k :key :as c}] (assoc acc k (dissoc c :key :xpath))) {}))))))
+
+(defn build-element-extension [e]
+   (let [tp (get-in e [:type 0 :code])
           ext-url (when (= tp "Extension")
                     #_(assert (= 1 (count (get-in e [:type 0 :profile]))) (str e))
                     (get-in e [:type 0 :profile 0]))
           mn (:min e)
           mx (and (:max e) (not (= "*" (:max e))) (parse-int (:max e)))]
-      (-> (dissoc e :path :slicing :sliceName :id :min :max)
-          (cond-> (:type e) (assoc :type tp))
+     (->  e
           (cond-> ext-url (cond-> mn (assoc :min mn) mx (assoc :max mx)) )
-          (cond-> ext-url (assoc :url ext-url))
-          (cond-> (not ext-url)
-            (cond->
-                (array-element? e)    (-> (assoc :array true)
-                                          (cond-> mn  (assoc :min mn)
-                                                  mx  (assoc :max mx)))
-                (required-element? e) (assoc :required true)))
-          (process-patterns)))))
+          (cond-> ext-url (assoc :url ext-url)))))
+
+(defn build-element-cardinality [e]
+  (let [mn (:min e)
+        mx (and (:max e) (not (= "*" (:max e))) (parse-int (:max e)))]
+    (cond-> (dissoc e :min :max)
+      (not (:url e))
+      (cond->
+          (array-element? e)    (-> (assoc :array true)
+                                    (cond-> mn  (assoc :min mn)
+                                            mx  (assoc :max mx)))
+          (required-element? e) (assoc :required true)))))
+
+(defn build-element-type [e]
+  (assert (<= (count (get-in e [:type])) 1) (pr-str e))
+  (let [tp (get-in e [:type 0 :code])]
+    (cond-> e (:type e) (assoc :type tp))))
+
+(defn clear-element [e]
+  (dissoc e :path :slicing :sliceName :id :mapping :extension :example :alias :condition :comment :definition :requirements))
+
+;; TODO add test for constraint
+(defn build-element [e]
+  (-> e
+      preprocess-element
+      clear-element
+      build-element-binding
+      build-element-constraings
+      build-element-extension
+      build-element-cardinality
+      build-element-type
+      process-patterns))
 
 ;; TODO: context {elements for elements, elements for resoruce}
 ;; TODO: discriminator [50%]
-
-;; TODO: extensions
-;; TODO: references
 ;; TODO: array and scalar only for resources or logical models
 ;; TODO: reslicing (low prioroty)
 ;; TODO: delete example bindings
+;; TODO: slicing on choices
+
+;; Algorithm
+;; 1 loop over elements
+;; 2 calculate path
+;; 3 calculate actions from path and previous path
+;; 4 apply actions
 
 (defn translate [structure-definition]
-  (let [res (-> (select-keys structure-definition [:derivation :name :type :kind :abstract :url :version :base])
+  (let [res (-> (select-keys structure-definition [:name :type :url :version :base])
+                (cond-> (:baseDefinition structure-definition) (assoc :base (:baseDefinition structure-definition)))
+                (cond-> (:abstract structure-definition) (assoc :abstract true))
                 (assoc :class
                        (cond
-                         (and (= "resource" (:type structure-definition)) (= "constraint" (:derivation structure-definition)))
-                         "profile"
-                         (= "Extension" (:type structure-definition))
-                         "extension"
-                         :else (:kind structure-definition))))]
+                         (and (= "resource" (:kind structure-definition)) (= "constraint" (:derivation structure-definition))) "profile"
+                         (= "Extension" (:type structure-definition)) "extension"
+                         :else (or (:kind structure-definition) "unknown"))))]
     (loop [value-stack [res]
            prev-path EMPTY_PATH
            els (->> (get-in structure-definition [:differential :element])

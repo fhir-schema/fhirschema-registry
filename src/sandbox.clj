@@ -12,6 +12,7 @@
 
   (def conn (cheshire.core/parse-string (slurp "connection.json") keyword))
 
+
   (pg/start ztx conn)
 
   (pg/execute! ztx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
@@ -52,12 +53,20 @@ limit 10"])
     (with-open [s (ndjson/url-stream "http://fs.get-ig.org/p/hl7.fhir.us.core/7.0.0/structuredefinition.ndjson.gz")]
       (ndjson/read-stream s (fn [acc res _] (conj acc res)) [])))
 
+  (def canonicals
+    (time
+     (with-open [s (ndjson/url-stream "http://fs.get-ig.org/p/hl7.fhir.us.core/7.0.0/structuredefinition.ndjson.gz")]
+       (ndjson/read-stream s (fn [acc res _] (assoc acc (:url res) (translate res))) {}))))
+
+  (count (keys canonicals))
+
+
   (count sds)
 
-  (mapv (fn [r]
-          (spit (str "tmp/schemas/" (last (str/split (:url r) #"/"))  ".yaml")
-                (clj-yaml.core/generate-string (translate r)))) sds)
-  
+  (->> sds
+       (mapv (fn [r]
+               (spit (str "tmp/schemas/" (last (str/split (:url r) #"/"))  ".yaml")
+                     (clj-yaml.core/generate-string [(translate r) r])))))
 
 
   )

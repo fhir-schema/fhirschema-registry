@@ -5,6 +5,7 @@
   (:import [com.google.cloud.storage StorageOptions
             BlobInfo BlobId
             Storage Bucket Blob Storage$BucketGetOption
+            Blob$BlobSourceOption
             Storage$BlobListOption
             Blob$BlobSourceOption
             Storage$BlobWriteOption]
@@ -31,6 +32,12 @@
               acc (process-fn acc res line-number)]
           (recur (.readLine reader) (inc line-number) acc))
         acc))))
+
+(defn blob-content [^Blob blob & [{json :json}]]
+  (let [res (String. (.getContent blob (into-array Blob$BlobSourceOption [])))]
+    (if json
+      (cheshire.core/parse-string res keyword)
+      res)))
 
 (defn blob-ndjson-writer [storage bucket file]
   (let [bid (BlobId/of bucket file)
@@ -62,11 +69,31 @@
                          (io/writer))]
     (cb writer)))
 
+(defn objects [storage bucket]
+  (let [storage (.getService (StorageOptions/getDefaultInstance))
+        ^Bucket bucket (.get storage bucket (into-array Storage$BucketGetOption []))
+        page (.list bucket (into-array Storage$BlobListOption []))]
+    (loop [page page acc (into [] (.getValues page))]
+      (println ".")
+      (if-let [next-page (.getNextPage page)]
+        (recur next-page (into acc (.getValues page)))
+        (into acc (.getValues page))))))
+
 
 (comment
   (def storage (.getService (StorageOptions/getDefaultInstance)))
 
-  (def ^Bucket bucket (.get storage "fhir-schema-registry" (into-array Storage$BucketGetOption [])))
+  (def pkgs
+    (time
+     (->> (objects storage "fs.get-ig.org")
+          (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
+          (pmap (fn [x] (blob-content x {:json true})))
+          (into []))))
+
+  (count pkgs)
+  (mapv (fn [x] [(:name x) (:version x)]) pkgs)
+
+  (def ^Bucket bucket (.get storage "fs.get-ig.org" (into-array Storage$BucketGetOption [])))
 
 
   (def page (.list bucket (into-array Storage$BlobListOption [])))
@@ -78,6 +105,8 @@
        (if-let [next-page (.getNextPage page)]
          (recur next-page (into acc (.getValues page)))
          (into acc (.getValues page))))))
+
+  pkg
 
 
   (count pkg)
