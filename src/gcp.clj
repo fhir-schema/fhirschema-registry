@@ -7,18 +7,52 @@
             Storage Bucket Blob Storage$BucketGetOption
             Blob$BlobSourceOption
             Storage$BlobListOption
+            Storage$BlobGetOption
             Blob$BlobSourceOption
             Storage$BlobWriteOption]
            [java.util.zip GZIPInputStream GZIPOutputStream]
            [java.nio.channels Channels]
-           [java.io BufferedReader InputStreamReader
+           [java.io BufferedReader InputStream InputStreamReader
             BufferedWriter OutputStreamWriter]))
 
 (defn mk-storage []
   (.getService (StorageOptions/getDefaultInstance)))
 
 (defn mk-bucket [^Storage storage]
-  (.get storage "fhir-schema-registry" (into-array Storage$BucketGetOption [])))
+  (.get storage "fhir-schema-registry"
+        (into-array Storage$BucketGetOption [])))
+
+
+(defn gz-stream [^InputStream str]
+  (GZIPInputStream. str))
+
+(defn blob-stream [^Blob blob {gz :gzip} read-fn]
+  (with-open [input-stream (Channels/newInputStream (.reader blob (into-array Blob$BlobSourceOption [])))]
+    (if gz
+      (with-open [gz-stream (gz-stream input-stream)]
+        (read-fn gz-stream))
+      (read-fn input-stream))))
+
+(defn read-ndjson-blob [^Blob blob]
+  (with-open [reader (-> (blob-stream {:gzip true} blob) InputStreamReader. BufferedReader.)]
+    (loop [line (.readLine reader)
+           line-number 0
+           acc []]
+      (if line
+        (let [res (cheshire.core/parse-string line keyword)]
+          (recur (.readLine reader) (inc line-number) (conj acc res)))
+        acc))))
+
+(defn process-ndjson-blob [^Blob blob process-fn]
+  (with-open [input-stream (Channels/newInputStream (.reader blob (into-array Blob$BlobSourceOption [])))
+              gz-stream (GZIPInputStream. input-stream)
+              reader (-> gz-stream InputStreamReader. BufferedReader.)]
+    (loop [line (.readLine reader)
+           line-number 0]
+      (when line
+        (let [res (cheshire.core/parse-string line keyword)]
+          (process-fn res line-number)
+          (recur (.readLine reader) (inc line-number)))))))
 
 (defn read-blob [^Blob blob process-fn]
   (with-open [input-stream (Channels/newInputStream (.reader blob (into-array Blob$BlobSourceOption [])))
@@ -54,6 +88,24 @@
      w (BufferedWriter. (OutputStreamWriter. outz))]
     (cb w)))
 
+(def get-ig-bucket "fs.get-ig.org")
+
+(defonce default-storage (atom nil))
+(defn get-default-storage []
+  (or @default-storage (reset! default-storage (mk-storage))))
+
+(defn get-blob
+  ([file] (get-blob (get-default-storage) get-ig-bucket file))
+  ([bucket file] (get-blob (get-default-storage) bucket file))
+  ([storage bucket file]
+   (let [bid (BlobId/of bucket file)]
+     (.get storage bid (into-array Storage$BlobGetOption [])))))
+
+(defn package-file [package version file]
+  (let [b (get-blob (str "p/" package "/" version "/" file))]
+    (assert b (str "no file " b))
+    b))
+
 (defn text-blob [storage bucket file content]
   (let [bid (BlobId/of bucket file)
         binfo (BlobInfo/newBuilder bid)]
@@ -69,9 +121,11 @@
                          (io/writer))]
     (cb writer)))
 
-(defn objects [storage bucket]
-  (let [storage (.getService (StorageOptions/getDefaultInstance))
-        ^Bucket bucket (.get storage bucket (into-array Storage$BucketGetOption []))
+(set! *warn-on-reflection* false)
+
+(defn objects [^String bucket]
+  (let [svc (.getService (StorageOptions/getDefaultInstance))
+        bucket (.get svc bucket ^"[Lcom.google.cloud.storage.Storage$BucketGetOption;" (into-array Storage$BucketGetOption []))
         page (.list bucket (into-array Storage$BlobListOption []))]
     (loop [page page acc (into [] (.getValues page))]
       (println ".")
@@ -85,15 +139,26 @@
 
   (def pkgs
     (time
-     (->> (objects storage "fs.get-ig.org")
+     (->> (objects "fs.get-ig.org")
           (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
           (pmap (fn [x] (blob-content x {:json true})))
           (into []))))
 
+
+  (defn get-blob [storage bucket file]
+    (let [bid (BlobId/of bucket (str/replace file #"^/" ""))]
+      (.get storage bid (into-array Storage$BlobGetOption []))))
+
+  (def blb (get-blob storage get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/structuredefinition.ndjson.gz"))
+
+  (def res (read-ndjson-blob blb))
+
+  (first res)
+
   (count pkgs)
   (mapv (fn [x] [(:name x) (:version x)]) pkgs)
 
-  (def ^Bucket bucket (.get storage "fs.get-ig.org" (into-array Storage$BucketGetOption [])))
+  (def ^Bucket bucket (.get storage get-ig-bucket (into-array Storage$BucketGetOption [])))
 
 
   (def page (.list bucket (into-array Storage$BlobListOption [])))

@@ -1,0 +1,20 @@
+services:
+  postgres:
+    container_name: fhirpackages_pg
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: fhirpackages
+      POSTGRES_USER: fhirpackages
+      POSTGRES_PASSWORD: secret
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data/pgdata
+    ports:
+      - "5437:5432"
+    networks:
+      - postgres_network
+    restart: unless-stopped
+
+networks:
+  postgres_network:
+    driver: bridge
