@@ -1,5 +1,6 @@
-(ns http.core
+(ns svs.http
   (:require
+   [system]
    [cheshire.core]
    [clojure.string :as str]
    [cognitect.transit :as transit]
@@ -12,7 +13,9 @@
    [ring.util.io]
    [ring.util.response]
    [cheshire.core]
-   [rpc])
+   [rpc]
+   [org.httpkit.client :as http]
+   )
   (:import [java.io BufferedWriter OutputStreamWriter ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util.zip GZIPOutputStream]))
@@ -33,7 +36,7 @@
           (instance? java.io.InputStream b) (cheshire.core/parse-stream b keyword)
           :else b)))
 
-(defn render-index [ztx req]
+(defn render-index [ctx req]
   {:body "ok"})
 
 (defn resolve-operation [meth uri]
@@ -63,27 +66,31 @@
 
 (parse-params "a=2%20;" "UTF-8")
 
-(defn dispatch [ztx {meth :request-method uri :uri :as req}]
-  (cond
-    (and (contains? #{:get :head} meth) (str/starts-with? (or uri "") "/static/"))
-    (handle-static req)
+(defn response-body [ctx body]
+  (cheshire.core/generate-string body))
 
-    (and (= "/" uri) (= :get meth))
-    (render-index ztx req)
+(defn dispatch [system {meth :request-method uri :uri :as req}]
+  (let [ctx (system/new-context system {:uri uri :method meth})]
+    (cond
+      (and (contains? #{:get :head} meth) (str/starts-with? (or uri "") "/static/"))
+      (handle-static req)
 
-    (and (= "/" uri) (= :post meth))
-    (rpc/proc ztx (parse-body (:body req)) req)
+      (and (= "/" uri) (= :get meth))
+      (render-index ctx req)
 
-    :else
-    (let [query-params (parse-params (:query-string req) "UTF-8")]
-      (if-let [op (resolve-operation meth uri)]
-        (do
-          (println op)
-          (->
-           (update (rpc/op ztx (assoc (merge req op) :query-params query-params))
-                   :body (fn [x] (if (map? x) (cheshire.core/generate-string x) x)))
-           (assoc-in [:headers "content-type"] "application/json")))
-        {:status 404}))))
+      (and (= "/" uri) (= :post meth))
+      (rpc/proc ctx (parse-body (:body req)) req)
+
+      :else
+      (let [query-params (parse-params (:query-string req) "UTF-8")]
+        (if-let [op (resolve-operation meth uri)]
+          (do
+            (println op)
+            (->
+             (update (rpc/op ctx (assoc (merge req op) :query-params query-params))
+                     :body (fn [x] (if (map? x) (cheshire.core/generate-string x) x)))
+             (assoc-in [:headers "content-type"] "application/json")))
+          {:status 404})))))
 
 (defn stream [req cb]
   (server/with-channel req chan
@@ -109,36 +116,36 @@
         (finally
           (server/close chan))))))
 
+(defn request [ctx {path :path}]
+  @(http/get (str "http://localhost:" (:port (system/get-state-from-ctx ctx)) path)))
 
-(defn start [ztx config]
-  (let [port (or (:port config) 7777)]
-    (println :http port)
-    (swap! ztx assoc :http (server/run-server (fn [req] (#'dispatch ztx req)) {:port port}))))
+(defn start [system config]
+  (system/start-service
+   system
+   (let [port (or (:port config) 7777)]
+     (println :http/start port)
+     {:server (server/run-server (fn [req] (#'dispatch system req)) {:port port}) :port port})))
 
-(defn stop [ztx]
-  (when-let [stop (:http @ztx)]
-    (stop)
-    (swap! ztx dissoc :http)))
+(defn stop [system]
+  (when-let [stop (:server (system/get-state system))]
+    (stop)))
 
 
 (comment
-  (require '[org.httpkit.client :as http])
 
-  (defmethod rpc/op :get-package
-    [ztx req]
+  (defmethod rpc/op :get-test
+    [ctx req]
     {:status 200
-     :body {:message "ok"}})
+     :body (response-body ctx {:message "ok"})})
 
-  (def ztx (atom {}))
+  (def system (system/new-system {}))
 
-  (start ztx {:port 7776})
-  (stop ztx)
+  (start system {:port 7776})
+  (stop system)
 
-  (slurp (:body @(http/get "http://localhost:7776")))
+  (:body)
 
-  (slurp (:body @(http/get "http://localhost:7776/Package")))
-  (slurp (:body @(http/get "http://localhost:7776/Package")))
-
+  (:body @(http/get "http://localhost:7776/test"))
 
 
 

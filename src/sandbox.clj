@@ -1,10 +1,12 @@
 (ns sandbox
-  (:require [pg.core :as pg]
+  (:require [system]
+            [svs.gcp :as gcp]
+            [svs.http :as http]
+            [svs.pg :as pg]
             [cheshire.core]
-            [gcp]
             [clj-yaml.core]
             [clojure.string :as str]
-            [ndjson]
+            [utils.ndjson :as ndjson]
             [fhirschema.terminology]
             [fhirschema.transpiler :refer [translate]]))
 
@@ -12,17 +14,30 @@
   (spit "/tmp/dump.yaml" (clj-yaml.core/generate-string x)))
 
 (comment
+  (def system (system/new-system {}))
 
-  (def ztx (atom {}))
+  (http/start system {:port 3334})
+  (gcp/start system)
+  (pg/start system)
 
-  (def conn (cheshire.core/parse-string (slurp "connection.json") keyword))
+  (gcp/stop system)
+  (http/stop system)
 
-  (pg/start ztx conn)
+  (def ctx (system/new-context system))
 
-  (pg/execute! ztx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
+  (defmethod rpc/op :get-sandbox
+    [ctx req]
+    (time
+     (let [pkg-blob (gcp/get-blob ctx (gcp/package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json"))]
+       {:status 200
+        :body (http/response-body ctx (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"]))})))
+
+  (http/request ctx {:path "/sandbox"})
+
+  (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
 
   (pg/execute!
-   ztx ["
+   ctx ["
 CREATE MATERIALIZED VIEW structuredefinitions AS
 SELECT
 resource#>>'{meta,package,url}' as package_name,
@@ -35,20 +50,20 @@ order by 1,2,3,4
 
 "])
 
-  (pg/execute! ztx ["create index sd_package_name_trgrm on structuredefinitions USING gin (package_name gin_trgm_ops)"])
+  (pg/execute! ctx ["create index sd_package_name_trgrm on structuredefinitions USING gin (package_name gin_trgm_ops)"])
 
   (pg/execute! ["REFRESH MATERIALIZED VIEW structuredefinitions;"])
 
-  (pg/execute! ztx ["
+  (pg/execute! ctx ["
 select distinct package_version
 from structuredefinitions
 where
  package_name ilike 'hl7.fhir.us.core'
 limit 10"])
 
-  (pg/execute! ztx ["select * from structuredefinitions where package_name ilike 'hl7.fhir.us.core' and package_version = '5.0.1'limit 10"])
+  (pg/execute! ctx ["select * from structuredefinitions where package_name ilike 'hl7.fhir.us.core' and package_version = '5.0.1'limit 10"])
 
-  (->> (pg/execute! ztx ["select * from structuredefinitions where package_name ilike 'hl7.fhir.us.core' and package_version = '6.1.0'limit 10"])
+  (->> (pg/execute! ctx ["select * from structuredefinitions where package_name ilike 'hl7.fhir.us.core' and package_version = '6.1.0'limit 10"])
        (mapv (fn [x]
                (fhirschema.transpiler/translate (:resource x)))))
 
@@ -77,19 +92,13 @@ limit 10"])
 
   (def pkgs
     (time
-     (->> (gcp/objects storage "fs.get-ig.org")
+     (->> (gcp/objects)
           (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
           (pmap (fn [x] (gcp/blob-content x {:json true})))
           (into []))))
 
   (count pkgs)
-
-  (def pkgs
-    (time
-     (->> (gcp/objects storage "fs.get-ig.org")
-          (filterv (fn [x] (str/starts-with? (.getName x) "/p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson")))
-          (pmap (fn [x] (gcp/read-ndjson-blob x {:json true})))
-          (into []))))
+  (mapv (fn [x] [(:name x) (:version x)]) pkgs)
 
   (def blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/structuredefinition.ndjson.gz"))
   (def sds (gcp/read-ndjson-blob blb))
@@ -161,24 +170,24 @@ limit 10"])
 
   (def cs-b (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
 
-  (time (gcp/blob-stream cs-b {:gzip true} (fn [in] (pg/copy-ndjson-stream ztx "cs" in))))
+  (time (gcp/blob-stream cs-b {:gzip true} (fn [in] (pg/copy-ndjson-stream ctx "cs" in))))
 
-  (pg/execute! ztx ["create table cs (resource jsonb)"])
+  (pg/execute! ctx ["create table cs (resource jsonb)"])
 
-  (pg/execute! ztx ["select * from cs limit 1"])
+  (pg/execute! ctx ["select * from cs limit 1"])
 
-  (pg/execute! ztx ["create table tcs (resource jsonb)"])
-  (pg/execute! ztx ["create table tcs_concept (resource jsonb)"])
+  (pg/execute! ctx ["create table tcs (resource jsonb)"])
+  (pg/execute! ctx ["create table tcs_concept (resource jsonb)"])
 
 
   (do
-    (pg/execute! ztx ["truncate tcs; truncate tcs_concept"])
+    (pg/execute! ctx ["truncate tcs; truncate tcs_concept"])
     (time
      (let [pkg (gcp/blob-content  (gcp/package-file "hl7.fhir.r4.core" "4.0.1" "package.json") {:json true})
            pkg-fields {:package (:name pkg) :package_version (:version pkg)}]
-       (pg/copy-ndjson ztx "tcs_concept"
+       (pg/copy-ndjson ctx "tcs_concept"
                        (fn [csc-write]
-                         (pg/copy-ndjson ztx "tcs"
+                         (pg/copy-ndjson ctx "tcs"
                                          (fn [cs-write]
                                            (gcp/process-ndjson-blob
                                             (gcp/package-file "hl7.fhir.r4.core" "4.0.1" "codesystem.ndjson.gz")
@@ -194,16 +203,114 @@ limit 10"])
    (gcp/process-ndjson-blob (gcp/package-file "hl7.fhir.r4.core" "4.0.1" "structuredefinition.ndjson.gz")
     (fn [res ln] (println ln (:url res) (:kind res) (:derivation res)))))
 
-  (pg/execute! ztx ["select * from tcs where resource->>'content' <> 'complete' limit 10"])
+  (pg/execute! ctx ["select * from tcs where resource->>'content' <> 'complete' limit 10"])
 
-  (pg/execute! ztx ["select * from tcs where resource->>'content' <> 'complete' limit 10"])
-  (pg/execute! ztx ["select resource->>'content', count(*) from tcs group by 1 order by 2 desc"])
+  (pg/execute! ctx ["select * from tcs where resource->>'content' <> 'complete' limit 10"])
+  (pg/execute! ctx ["select resource->>'content', count(*) from tcs group by 1 order by 2 desc"])
 
   {:select {:c [:. :content] :cnt [:count :*]} :from :tcs :group-by 1 :order-by [:desc 2]}
 
-  (pg/execute! ztx ["select count(*) from tcs"])
+  (pg/execute! ctx ["select count(*) from tcs"])
 
-  (pg/execute! ztx ["select * from tcs_concept limit 100"])
+  (pg/execute! ctx ["select * from tcs_concept limit 100"])
+
+
+  (def pkgs
+    (time
+     (->> (gcp/objects)
+          (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
+          (pmap (fn [x] (gcp/blob-content x {:json true})))
+          (into []))))
+
+  (pg/copy-ndjson
+   ctx "packages"
+   (fn [write]
+     (->> (gcp/objects)
+          (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
+          (pmap (fn [x]
+                  (let [pkg (gcp/blob-content x {:json true})]
+                    (try
+                      (write pkg)
+                      (catch Exception e
+                        (println :error pkg (.getMessage e)))))))
+          (into []))))
+
+  (pg/execute! ctx ["create table packages (resource jsonb)"])
+  (pg/execute! ctx ["truncate packages"])
+  (pg/execute! ctx ["select distinct resource->>'name' from packages"])
+  (pg/execute! ctx ["select * from packages limit 10"])
+  (pg/execute! ctx ["
+drop materialized view if exists package_names;
+create materialized view package_names AS
+select
+  resource->>'name' as name,
+  array_agg(resource->>'version') as versions
+from packages
+group by 1
+order by 1
+"])
+
+  (pg/execute! ctx ["select * from package_names"])
+
+  (pg/execute! ctx ["select * from packages limit 10"])
+
+  (pg/execute! ctx ["
+drop materialized view if exists packages_view;
+create materialized view packages_view AS
+select
+  resource->>'name' as name,
+  resource->>'version' as version,
+  resource->>'canonical' as canonical,
+  resource->>'fhirVersion' as fhirversion,
+  resource->'dependencies' as deps
+from packages
+order by 1,2
+"])
+
+  (pg/execute! ctx ["select * from packages_view limit 100"])
+
+
+  (pg/execute! ctx ["
+drop materialized view if exists packages_deps;
+create materialized view packages_deps AS
+select
+  resource#>>'{name}' as name,
+  resource#>>'{version}' as version,
+  substring(kv.key::text,2) as dep_name,
+  kv.value::text as dep_version
+from packages,
+jsonb_each_text( resource->'dependencies' ) as kv
+order by name, version, dep_name, dep_version
+"])
+
+
+  (pg/execute! ctx ["
+select
+dep_name, dep_version,count(*)
+from packages_deps
+group by 1,2
+order by 3 desc
+limit 20"])
+
+  ;; sync package
+
+;; packages management
+;; register package
+;; sync package with s3 bucket
+;; * load structuredefinitions
+;;   * elements view
+;;   * bindings view
+;;   * fhirschemas
+;; * load codesystems
+;;   * built-in cs
+;;   * others
+;;   * concepts view
+;; * load valuesets
+
+;; bindings -> valuesets [built-in and static]
+;; enrich fhirschemas with valuesets and elements like array/scalar, descriminators etc [put limit on codes < 100]
+;; serve fhirschemas and may be codesystems + valuesets
+
 
   )
 

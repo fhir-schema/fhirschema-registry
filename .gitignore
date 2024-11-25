@@ -6,3 +6,4 @@ packages.ndjson.gz
 tmp
 .DS_Store
 data
+gcp-connection.json

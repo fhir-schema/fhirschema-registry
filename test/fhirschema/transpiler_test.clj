@@ -347,7 +347,6 @@
      :detailed {:url "detailed",
                 :type "Extension",
                 :array true,
-                :min 0,
                 :required #{"url" "value" "valueCoding"}
                 :elements {:value {:binding {:strength "required", :valueSet "http://hl7.org/fhir/us/core/ValueSet/detailed-ethnicity"},
                                    :choices ["valueCoding"]},

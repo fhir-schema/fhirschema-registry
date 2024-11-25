@@ -1,4 +1,4 @@
-(ns ndjson
+(ns utils.ndjson
   (:require [clojure.string :as str]
             [clojure.java.io :as io]
             [cheshire.core])
@@ -27,6 +27,18 @@
               acc (process-fn acc res line-number)]
           (recur (.readLine reader) (inc line-number) acc))
         acc))))
+
+(defn process-stream
+  "process-fn (fn [json line-number])"
+  [^InputStream input-stream process-fn]
+  (with-open [gz-stream (GZIPInputStream. input-stream)
+              reader (-> gz-stream InputStreamReader. BufferedReader.)]
+    (loop [line (.readLine reader)
+           line-number 0]
+      (if line
+        (let [res (cheshire.core/parse-string line keyword)]
+          (process-fn res line-number)
+          (recur (.readLine reader) (inc line-number)))))))
 
 (defn url-stream [^String url]
   (let [^URL url (URL. url)
