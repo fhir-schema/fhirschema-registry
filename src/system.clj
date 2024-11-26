@@ -64,14 +64,35 @@
        (swap! (:system ~ctx) update :services (fn [x#] (when x# (disj x# '~key))))
        (clear-system-state ~ctx []))))
 
-
 (defn ctx-get [ctx & path]
   (get-in ctx path))
+
+
+(defn manifest-hook [ctx hook-name opts]
+  (update-system-state ctx [:manifested-hooks hook-name] opts))
+
+(defn register-hook [ctx hook-name hook-handler & [opts]]
+  ;; TODO: check hooks availability
+  (update-system-state ctx [:hooks hook-name] (fn [x] (assoc (or x {}) hook-handler (or opts {})))))
+
+(defn get-hooks [ctx hook-name]
+  (->> (get-system-state ctx [:hooks hook-name])
+       (mapv (fn [[h opts]] (assoc opts :fn h)))))
+
+(defn -register-config [ctx service-name config]
+  (update-system-state ctx [:config service-name] config))
+
+(defmacro register-config [ctx config]
+  (let [key (keyword (.getName *ns*))]
+    `(-register-config ~ctx ~key ~config)))
+
 
 (defn start-system [{services :services :as config}]
   (let [system (new-system {})]
     (doseq [svs services]
       (require (symbol svs))
+      (when-let [manifest (resolve (symbol (name svs) "manifest"))]
+        (println :MANIFEST svs (var-get manifest)))
       (when-let [start-fn (resolve (symbol (name svs) "start"))]
         (start-fn system (get config (keyword svs) {}))))
     system))
@@ -82,6 +103,11 @@
     (when-let [stop-fn (resolve (symbol (name sv) "stop"))]
       (println :stop stop-fn)
       (println :> (stop-fn ctx)))))
+
+;; TODO: get rid of start-service and stop-service
+;; TODO: make register module using manifest
+;; on module registration it register all config params
+;; this params are used to validate before start
 
 (comment
   (require ['svs.pg])
@@ -94,8 +120,6 @@
   (get-system-state system [])
 
   (def ctx (new-context system))
-
-  (get-state-from-ctx ctx)
 
   (set-system-state ctx [] {:a 1})
 
@@ -118,6 +142,8 @@
     (start-system
      {:services ["svs.pg"]
       :svs.pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+
+  (stop-system pg-system)
 
   (svs.pg/execute! pg-system ["select 1"])
 

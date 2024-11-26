@@ -23,6 +23,7 @@
            [java.util.zip GZIPOutputStream]))
 
 
+
 (set! *warn-on-reflection* true)
 
 (defn handle-static [{meth :request-method uri :uri :as req}]
@@ -113,6 +114,18 @@
   (let [routes (system/get-system-state ctx [:endpoints])]
     (svs.http.routing/match [meth url] routes)))
 
+(defn on-request-hooks [ctx params]
+  (doseq [on-request-hook (system/get-hooks ctx ::on-request)]
+    (when-let [f (:fn on-request-hook)]
+      (f ctx params))))
+
+(defn format-response [ctx resp]
+  (if-not (and (:body resp) (or (map? (:body resp)) (vector? (:body resp))))
+    resp
+    (-> resp
+     (update :body (fn [x] (if (or (vector? x) (map? x)) (cheshire.core/generate-string x) x)))
+     (assoc-in [:headers "content-type"] "application/json"))))
+
 (defn dispatch [system {meth :request-method uri :uri :as req}]
   (let [ctx (system/new-context system {::uri uri ::method meth ::remote-addr (:remote-addr req)})
         ctx (apply-middlewares ctx req)]
@@ -128,10 +141,10 @@
         (if-let [{{f :fn :as op} :match params :params} (resolve-endpoint ctx meth uri)]
           (do
             (log/info ctx meth uri {:route-params params})
-            (->
+            (on-request-hooks ctx {:uri uri :method meth :query-params query-params})
+            (->>
              (f ctx (assoc (merge req op) :query-params query-params :route-params params))
-             (update :body (fn [x] (if (or (vector? x) (map? x)) (cheshire.core/generate-string x) x)))
-             (assoc-in [:headers "content-type"] "application/json")))
+             (format-response ctx)))
           (do
             (log/info ctx meth (str uri " not found" {:http.status 404}))
             {:status 404}))))))
@@ -177,6 +190,7 @@
    (let [port (or (:port config) 7777)]
      (log/info system ::start "start http server" {:port port})
      {:server (server/run-server (fn [req] (#'dispatch system req)) {:port port}) :port port}))
+  (system/manifest-hook system ::on-request {:desc "This hook is called on request and passed method, uri and params"})
   (register-endpoint system :get "/api" #'get-open-api))
 
 (defn stop [system]
@@ -185,6 +199,14 @@
    (when-let [stop (system/get-system-state system [:server])]
      (stop))))
 
+(def manifest
+  {:description "http server module"
+   :deps [#'log/manifest]
+   :config
+   {:port
+    {:type "integer"
+     :default 8080
+     :validator pos-int?}}})
 
 (comment
 
@@ -225,6 +247,11 @@
 
   (parse-route "/Patient/:id")
 
+  (defn on-request-hook [ctx params] (println :HOOK params))
+
+  (system/register-hook system ::on-request #'on-request-hook)
+
+  (request system {:path "/api"})
 
 
   )

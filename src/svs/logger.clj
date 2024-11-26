@@ -9,8 +9,9 @@
 (defn start [system config]
   (system/start-service system (update (merge default-config config) :level #(get levels %))))
 
-(defn stop [system]
-  )
+(defn stop [system])
+
+(defn reload-level [ctx new-level])
 
 (defn set-system-level [ctx lvl]
   (system/set-system-state ctx [:level] (get levels lvl)))
@@ -30,4 +31,14 @@
   (when (<= (system/get-system-state ctx [:level] 1) 0)
     (println :debug (merge params {:event.name ev :message msg :level "DEBUG" :timestamp (java.util.Date.)}))))
 
-
+(def manifest
+  {:description "This is a logger module"
+   :deps []
+   :config
+   {:level {:type "string"
+            :enum ["debug" "info" "error"]
+            :default "info"
+            :validator string?
+            :on-change #'reload-level}
+    :loggers {:type "string"
+              :enum ["json" "file" "elastic" "lokki"]}}})

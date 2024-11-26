@@ -41,13 +41,6 @@
 
   (def ctx (system/new-context system))
 
-  (defmethod rpc/op :get-sandbox
-    [ctx req]
-    (println ::remote-addr (svs.http/ctx-remote-addr ctx))
-    (let [pkg-blob (gcp/get-blob ctx (gcp/package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json"))]
-      {:status 200
-       :body (http/response-body ctx (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"]))}))
-
   (http/request ctx {:path "/sandbox"})
 
   (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])

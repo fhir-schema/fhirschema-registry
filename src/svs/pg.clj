@@ -186,8 +186,19 @@
   (system/stop-service
    system
    (when-let [^HikariDataSource conn (system/get-system-state system [:datasoruce])]
-     (.close conn)))
-  )
+     (.close conn))))
+
+(meta #'log/manifest)
+
+(def manifest
+  {:description "postgresql service"
+   :deps [#'log/manifest]
+   :config
+   {:port      {:type "integer" :default 5432 :validator pos-int?}
+    :host      {:type "string" :required true}
+    :database  {:type "string" :required true}
+    :password  {:type "string" :sensitive true :required true}
+    :pool-size {:type "integer" :default 5 :validator pos-int?}}})
 
 (comment
   (def context (system/new-system {}))
