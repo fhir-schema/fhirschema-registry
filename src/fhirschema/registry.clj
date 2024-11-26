@@ -151,7 +151,9 @@ ORDER BY dep_name
 
 (defn main [config]
   (system/start-system
-   (assoc config :services ["svs.pg" "svs.http" "svs.gcp" "fhirschema.registry"])))
+   (assoc config
+          :services ["svs.pg" "svs.http" "svs.gcp" "fhirschema.registry"]
+          :svs.pg (cheshire.core/parse-string (slurp "connection.json") keyword))))
 
 (defn -main [& args]
   (let [opts (parse-opts args cli-options)]

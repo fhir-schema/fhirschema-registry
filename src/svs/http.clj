@@ -111,7 +111,7 @@
 
 (defn resolve-endpoint [ctx meth url]
   (let [routes (system/get-system-state ctx [:endpoints])]
-    (http.routing/match [meth url] routes)))
+    (svs.http.routing/match [meth url] routes)))
 
 (defn dispatch [system {meth :request-method uri :uri :as req}]
   (let [ctx (system/new-context system {::uri uri ::method meth ::remote-addr (:remote-addr req)})
