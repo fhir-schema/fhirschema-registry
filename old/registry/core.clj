@@ -22,7 +22,7 @@
   (gcp/start sys (:gcp config)))
 
 (defn stop [sys]
-  (system/stop-services sys))
+  (system/stop-system sys))
 
 (defmethod rpc/op :get-package
   [ctx _req]
@@ -164,7 +164,7 @@ ORDER BY dep_name
 
   (start system {:pg pg-conn :http {:port 7777}})
 
-  (system/stop-services system)
+  (system/stop-system system)
 
   (stop system)
 

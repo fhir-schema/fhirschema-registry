@@ -183,15 +183,15 @@
     {:status 200
      :body (response-body ctx {:message (java.util.Date.) :route-params (:route-params req)})})
 
+  (defn logging-mw [ctx req]
+    (println :HTTP (:uri req))
+    ctx)
+
   (def system (system/new-system {}))
 
   (start system {:port 7776})
   (stop system)
 
-
-  (defn logging-mw [ctx req]
-    (println :HTTP (:uri req))
-    ctx)
 
   (register-middleware system #'logging-mw)
 

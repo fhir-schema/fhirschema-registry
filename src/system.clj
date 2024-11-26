@@ -67,17 +67,29 @@
        (swap! (:system ~ctx) update :services (fn [x#] (when x# (disj x# '~key))))
        (clear-system-state ~ctx []))))
 
-(defn stop-services [ctx]
+
+(defn ctx-get [ctx & path]
+  (get-in ctx path))
+
+(defn start-system [{services :services :as config}]
+  (let [system (new-system {})]
+    (doseq [svs services]
+      (require (symbol svs))
+      (when-let [start-fn (resolve (symbol (name svs) "start"))]
+        (start-fn system (get config (keyword svs) {}))))
+    system))
+
+(defn stop-system [ctx]
   (doseq [sv (:services @(:system ctx))]
     (require [sv])
     (when-let [stop-fn (resolve (symbol (name sv) "stop"))]
       (println :stop stop-fn)
       (println :> (stop-fn ctx)))))
 
-(defn ctx-get [ctx & path]
-  (get-in ctx path))
-
 (comment
+  (require ['svs.pg])
+  (require ['svs.ups])
+
   (def system (new-system {}))
   system
 
@@ -103,8 +115,13 @@
    system
    (println :ok))
 
-  (stop-services system)
+  (stop-system system)
 
+  (def pg-system
+    (start-system
+     {:services ["svs.pg"]
+      :svs.pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
 
+  (svs.pg/execute! pg-system ["select 1"])
 
   )

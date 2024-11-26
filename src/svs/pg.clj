@@ -173,11 +173,13 @@
   (cheshire.core/parse-string (slurp "connection.json") keyword))
 
 (defn start [system & [opts]]
-  (system/start-service system
+  (system/start-service
+   system
    (let [connection (or opts (default-connection))
+         _ (log/info system ::connecting (:database connection) (dissoc connection :password))
          db (get-pool connection)]
-     (log/info system ::connect-to (:database connection) (dissoc connection :password))
-     (println :db db (jdbc/execute! db ["select 1"]))
+     (jdbc/execute! db ["select 1"])
+     (log/info system ::connected (:database connection) (dissoc connection :password))
      {:datasource db :connection/info connection})))
 
 (defn stop [system]
@@ -195,7 +197,7 @@
 
   context
 
-  (system/stop-services context)
+  (system/stop-system context)
   (stop context)
 
   (execute! context ["select 1"])

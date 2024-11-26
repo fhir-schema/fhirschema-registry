@@ -19,7 +19,7 @@
 
 
 (defn stop [sys]
-  (system/stop-services sys))
+  (system/stop-system sys))
 
 (defn get-package [ctx _req]
   {:status 200
@@ -146,39 +146,28 @@ ORDER BY dep_name
   (http/register-endpoint sys :get "/Package" #'get-package)
   (http/register-endpoint sys :get "/Package/$deps" #'get-package-deps)
   (http/register-endpoint sys :get "/Package/$lookup" #'get-package-lookup)
-  (http/register-endpoint sys :get "/FHIRSchema" #'get-fhirschema))
+  (http/register-endpoint sys :get "/FHIRSchema" #'get-fhirschema)
+  (log/info sys ::started "started"))
 
-(defn main [sys config]
-  (pg/start sys (:pg config))
-  (http/start sys (:http config))
-  (gcp/start sys (:gcp config))
-  (start sys config))
+(defn main [config]
+  (system/start-system
+   (assoc config :services ["svs.pg" "svs.http" "svs.gcp" "fhirschema.registry"])))
 
 (defn -main [& args]
-  (let [sys (system/new-system)
-        opts (parse-opts args cli-options)]
-    (main sys {:http {:port (get-in opts [:options :port])}})))
+  (let [opts (parse-opts args cli-options)]
+    (main {:svs.http {:port (get-in opts [:options :port])}})))
 
 (comment
 
-  (def system (system/new-system {}))
-
   (def pg-conn (json/parse-string (slurp "gcp-connection.json") keyword))
+  (def system (main {:svs.pg pg-conn :svs.http {:port 7777}}))
 
-  (main system {:pg pg-conn :http {:port 7777}})
-
-  (start system {})
-
-  system
-
-  (system/stop-services system)
+  (system/stop-system system)
 
   (stop system)
 
   (http/request system {:path "/Package?name=r4"})
 
   (http/request system {:path "/Package/$lookup?name=hl7%20fhir%20core"})
-
-
 
   )
