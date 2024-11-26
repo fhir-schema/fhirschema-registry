@@ -1,5 +1,6 @@
 (ns svs.pg
   (:require
+   [svs.logger :as log]
    [system]
    [clojure.string :as str]
    [clojure.java.io :as io]
@@ -39,7 +40,7 @@
        (mapv coerce)))
 
 (defn datasource [ctx]
-  (:datasource (system/get-state-from-ctx ctx)))
+  (system/get-system-state ctx [:datasource]))
 
 (defn connection [ctx]
   (let [^HikariDataSource datasource (datasource ctx)]
@@ -50,6 +51,7 @@
     (f conn)))
 
 (defn execute! [ctx q]
+  (log/info ctx ::execute q)
   (->> (jdbc/execute! (datasource ctx) q)
        (mapv coerce)))
 
@@ -174,43 +176,56 @@
   (system/start-service system
    (let [connection (or opts (default-connection))
          db (get-pool connection)]
+     (log/info system ::connect-to (:database connection) (dissoc connection :password))
      (println :db db (jdbc/execute! db ["select 1"]))
      {:datasource db :connection/info connection})))
 
 (defn stop [system]
-  (when-let [^HikariDataSource conn (:datasoruce (system/get-state system))]
-    (.close conn)))
+  (system/stop-service
+   system
+   (when-let [^HikariDataSource conn (system/get-system-state system [:datasoruce])]
+     (.close conn)))
+  )
 
 (comment
-  (def system (system/new-system {}))
+  (def context (system/new-system {}))
 
   (def conn (cheshire.core/parse-string (slurp "connection.json") keyword))
+  (start context conn)
 
-  (start system conn)
+  context
 
-  (system/stop-services system)
-  (stop system)
+  (system/stop-services context)
+  (stop context)
 
-  (def ctx (system/new-context system))
-
-  (execute! ctx ["select 1"])
-  (execute! ctx ["create table if not exists test  (resoruce jsonb)"])
+  (execute! context ["select 1"])
+  (execute! context ["create table if not exists test  (resoruce jsonb)"])
 
   (dotimes [i 20]
-    (copy ctx "copy test (resource) FROM STDIN csv quote e'\\x01' delimiter e'\\t'"
+    (copy context "copy test (resource) FROM STDIN csv quote e'\\x01' delimiter e'\\t'"
           (fn [w]
             (doseq [i (range 100)]
               (w (cheshire.core/generate-string {:a i}))))))
 
-  (execute! ctx ["select count(*) from test"])
-  (execute! ctx ["truncate test"])
+  (execute! context ["select count(*) from test"])
+  (svs.logger/set-system-level context :error)
+  (svs.logger/set-system-level context :debug)
+
+  (svs.logger/get-system-level context)
+  (svs.logger/error context ::test "msg")
+  (svs.logger/info context ::test "msg")
+  (svs.logger/debug context ::test "msg")
+
+  context
+
+  (execute! context ["truncate test"])
 
   (dotimes [i 100]
-    (fetch ctx ["select resource from test"] 100 "resource" (fn [x i] (print "."))))
+    (fetch context ["select resource from test"] 100 "resource" (fn [x i] (print "."))))
 
 
-  (execute! ctx ["select count(*) from test"])
-  (execute! ctx ["truncate test"])
-  (copy-ndjson ctx "test" (fn [w] (doseq [i (range 100)] (w {:i i}))))
+  (execute! context ["select count(*) from test"])
+  (execute! context ["truncate test"])
+  (copy-ndjson context "test" (fn [w] (doseq [i (range 100)] (w {:i i}))))
 
   )

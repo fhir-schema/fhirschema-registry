@@ -168,15 +168,10 @@ ORDER BY dep_name
 
   (stop system)
 
-  (def ctx (system/new-context system))
+  (http/request system {:path "/Package?name=r4"})
 
-  (http/request ctx {:path "/Package?name=r4"})
-  (http/request ctx {:path "/Package/$lookup?name=hl7%20fhir%20core"})
+  (http/request system {:path "/Package/$lookup?name=hl7%20fhir%20core"})
 
-  (parse-opts ["action" "-p" "8080"]  cli-options)
-
-
-  ;;file, args, settings
 
 
 

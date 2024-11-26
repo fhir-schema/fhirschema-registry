@@ -1,6 +1,5 @@
 (ns svs.gcp
   (:require [clojure.string :as str]
-            [clojure.java.io :as io]
             [utils.ndjson :as ndjson]
             [system]
             [cheshire.core])
@@ -14,8 +13,7 @@
             Storage$BlobWriteOption]
            [java.util.zip GZIPInputStream GZIPOutputStream]
            [java.nio.channels Channels]
-           [java.io BufferedReader InputStream InputStreamReader
-            BufferedWriter OutputStreamWriter]))
+           [java.io BufferedReader InputStream InputStreamReader BufferedWriter OutputStreamWriter]))
 
 
 (defn gz-stream [^InputStream str]
@@ -26,42 +24,43 @@
 
 (def DEFAULT_BUCKET "fs.get-ig.org")
 
-(defn start [system & [cfg]]
-  (system/start-service system
+(defn start [context & [cfg]]
+  (system/start-service context
    {:svc (mk-service cfg)
     :bucket (or (:default/bucket cfg) DEFAULT_BUCKET)}))
 
-(defn stop [system]
-  (println :gcp/stop))
+(defn stop [context]
+  (system/stop-service context
+   (println :gcp/stop)))
 
-(defn get-service [ctx]
-  (:svc (system/get-state-from-ctx ctx)))
+(defn get-service [context]
+  (system/get-system-state context [:svc]))
 
-(defn get-bucket-name [ctx]
-  (:bucket (system/get-state-from-ctx ctx)))
+(defn get-bucket-name [context]
+  (system/get-system-state context [:bucket]))
 
 ;; focus
-(defn get-bucket [ctx & [bucket-name]]
-  (.get (get-service ctx)
-        ^String (or bucket-name (get-bucket-name ctx))
+(defn get-bucket [context & [bucket-name]]
+  (.get (get-service context)
+        ^String (or bucket-name (get-bucket-name context))
         ^"[Lcom.google.cloud.storage.Storage$BucketGetOption;" (into-array Storage$BucketGetOption [])))
 
 (defn package-file-name [package version file]
   (str "p/" package "/" version "/" file))
 
 (defn get-blob
-  ([ctx file] (get-blob ctx (get-bucket-name ctx) file))
-  ([ctx bucket file]
+  ([context file] (get-blob context (get-bucket-name context) file))
+  ([context bucket file]
    (let [bid (BlobId/of bucket file)
-         blb (.get (get-service ctx) bid (into-array Storage$BlobGetOption []))]
+         blb (.get (get-service context) bid (into-array Storage$BlobGetOption []))]
      (assert blb (str "FILE NOT EXISTS:" bucket "/" file))
      blb)))
 
 (defn objects
-  ([ctx] (objects ctx (get-bucket-name ctx)))
-  ([ctx ^String bucket]
-   (println ctx bucket)
-   (let [bucket (get-bucket ctx bucket)
+  ([context] (objects context (get-bucket-name context)))
+  ([context ^String bucket]
+   (println context bucket)
+   (let [bucket (get-bucket context bucket)
          page   (.list bucket (into-array Storage$BlobListOption []))]
      (loop [page page acc (into [] (.getValues page))]
        (if-let [next-page (.getNextPage page)]
@@ -85,10 +84,10 @@
   (with-open [s (blob-input-stream blob)]
     (ndjson/process-stream s process-fn)))
 
-(defn file-output-stream [ctx ^String file  & [{gz :gzip}]]
-  (let [bid (BlobId/of (get-bucket-name ctx) file)
+(defn file-output-stream [context ^String file  & [{gz :gzip}]]
+  (let [bid (BlobId/of (get-bucket-name context) file)
         binfo (BlobInfo/newBuilder bid)
-        ch (.writer ^Storage (get-service ctx) ^BlobInfo (.build binfo) (into-array Storage$BlobWriteOption []))
+        ch (.writer ^Storage (get-service context) ^BlobInfo (.build binfo) (into-array Storage$BlobWriteOption []))
         os (Channels/newOutputStream ch)]
     (if gz (GZIPOutputStream. os) os)))
 
@@ -131,26 +130,26 @@
 
   (start system {})
 
-  (def ctx (system/new-context system))
-  ctx
+  (def context (system/new-context system))
+  context
 
-  (get-service ctx)
+  (get-service context)
 
-  (get-bucket ctx)
+  (get-bucket context)
 
-  (get-bucket-name ctx)
+  (get-bucket-name context)
 
-  (count (objects ctx))
+  (count (objects context))
 
   (package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json")
 
-  (def pkg-blob (get-blob ctx (package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json")))
+  (def pkg-blob (get-blob context (package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json")))
 
   (blob-content pkg-blob {:json true})
 
   (def pkgs
     (time
-     (->> (objects ctx)
+     (->> (objects context)
       (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
       (pmap (fn [x] (blob-content x {:json true})))
       (into []))))
@@ -158,7 +157,7 @@
   (count pkgs)
   (first pkgs)
 
-  (def sd-blob (get-blob ctx (package-file-name "hl7.fhir.r4.core" "4.0.1" "structuredefinition.ndjson.gz")))
+  (def sd-blob (get-blob context (package-file-name "hl7.fhir.r4.core" "4.0.1" "structuredefinition.ndjson.gz")))
 
   sd-blob
 
@@ -168,14 +167,14 @@
 
   (blob-process-ndjson sd-blob (fn [res ln] (println ln (:url res))))
 
-  ;; (with-open [os (file-output-stream ctx "_test/json")]
+  ;; (with-open [os (file-output-stream context "_test/json")]
   ;;   (ndjson/write-stream os
   ;;    (fn [write]
   ;;      (doseq [i (range 100)]
   ;;        (write {:i i})))))
 
-  ;; (write-content ctx "_test/json" {:hello "ok"})
-  ;; (write-ndjson ctx "_test/test.ndjson.gz" (fn [write]))
+  ;; (write-content context "_test/json" {:hello "ok"})
+  ;; (write-ndjson context "_test/test.ndjson.gz" (fn [write]))
 
 
 

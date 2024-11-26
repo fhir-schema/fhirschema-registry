@@ -4,7 +4,7 @@
             [cheshire.core]
             [clj-yaml.core]
             [clojure.string :as str]
-            [ndjson]))
+            [utils.ndjson]))
 
 
 (defn dump [x]

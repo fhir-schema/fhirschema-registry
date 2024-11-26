@@ -3,7 +3,6 @@
    [system]
    [cheshire.core]
    [clojure.string :as str]
-   [cognitect.transit :as transit]
    [hiccup.page]
    [org.httpkit.server :as server]
    [ring.middleware.head]
@@ -12,10 +11,11 @@
    [ring.util.codec :as codec]
    [ring.util.io]
    [ring.util.response]
+   [cognitect.transit :as transit]
    [cheshire.core]
    [rpc]
-   [org.httpkit.client :as http]
-   )
+   [svs.logger :as log]
+   [org.httpkit.client :as http])
   (:import [java.io BufferedWriter OutputStreamWriter ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util.zip GZIPOutputStream]))
@@ -69,8 +69,23 @@
 (defn response-body [ctx body]
   (cheshire.core/generate-string body))
 
+(defn register-middleware [ctx mw-fn]
+  (system/update-system-state ctx [:middlewares] (fn [mws] (conj (or mws []) mw-fn))))
+
+(defn clear-middlewares [ctx]
+  (system/update-system-state ctx [:middlewares] (fn [mws] [])))
+
+(defn apply-middlewares [ctx req]
+  (->> (system/get-system-state ctx [:middlewares])
+       (reduce (fn [ctx mw] (mw ctx req)) ctx)))
+
+;; example work with context
+(defn ctx-remote-addr [ctx]
+  (system/ctx-get ctx ::remote-addr))
+
 (defn dispatch [system {meth :request-method uri :uri :as req}]
-  (let [ctx (system/new-context system {:uri uri :method meth})]
+  (let [ctx (system/new-context system {::uri uri ::method meth ::remote-addr (:remote-addr req)})
+        ctx (apply-middlewares ctx req)]
     (cond
       (and (contains? #{:get :head} meth) (str/starts-with? (or uri "") "/static/"))
       (handle-static req)
@@ -85,12 +100,14 @@
       (let [query-params (parse-params (:query-string req) "UTF-8")]
         (if-let [op (resolve-operation meth uri)]
           (do
-            (println op)
+            (log/info ctx meth uri)
             (->
              (update (rpc/op ctx (assoc (merge req op) :query-params query-params))
                      :body (fn [x] (if (map? x) (cheshire.core/generate-string x) x)))
              (assoc-in [:headers "content-type"] "application/json")))
-          {:status 404})))))
+          (do
+            (log/info ctx meth (str uri " not found" {:http.status 404}))
+            {:status 404}))))))
 
 (defn stream [req cb]
   (server/with-channel req chan
@@ -117,18 +134,20 @@
           (server/close chan))))))
 
 (defn request [ctx {path :path}]
-  @(http/get (str "http://localhost:" (:port (system/get-state-from-ctx ctx)) path)))
+  @(http/get (str "http://localhost:" (system/get-system-state ctx [:port]))))
 
 (defn start [system config]
   (system/start-service
    system
    (let [port (or (:port config) 7777)]
-     (println :http/start port)
+     (log/info system ::start "start http server" {:port port})
      {:server (server/run-server (fn [req] (#'dispatch system req)) {:port port}) :port port})))
 
 (defn stop [system]
-  (when-let [stop (:server (system/get-state system))]
-    (stop)))
+  (system/stop-service
+   system
+   (when-let [stop (system/get-system-state system [:server])]
+     (stop))))
 
 
 (comment
@@ -143,7 +162,16 @@
   (start system {:port 7776})
   (stop system)
 
-  (:body)
+
+  (defn logging-mw [ctx req]
+    (println :HTTP (:uri req))
+    ctx)
+
+  (register-middleware system #'logging-mw)
+
+  (clear-middlewares system)
+
+  (request system {:path "/test"})
 
   (:body @(http/get "http://localhost:7776/test"))
 

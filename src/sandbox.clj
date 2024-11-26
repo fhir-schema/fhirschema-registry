@@ -14,7 +14,23 @@
   (spit "/tmp/dump.yaml" (clj-yaml.core/generate-string x)))
 
 (comment
+  (def sys (system/new-system))
+
+  (system/start sys
+   ['svs.http 'svs.pg 'svs.gcp]
+   {:svs.http {:port 8081}
+    :svs.pluggins {:list ["plugins.auth-jwt"]}})
+
+  (svs.settings/set ctx :svs.http/port 8087)
+
+  ;; --svs.logger/level INFO
+  ;; --svs.http/port 8081
+  ;; --svs.plugins/list plugins.auth-jwt,
+  ;; --svs.pg/database fhirschema
+  ;; --auth.auth-jwt/url http://some-url/well-known
+
   (def system (system/new-system {}))
+
 
   (http/start system {:port 3334})
   (gcp/start system)
@@ -27,10 +43,10 @@
 
   (defmethod rpc/op :get-sandbox
     [ctx req]
-    (time
-     (let [pkg-blob (gcp/get-blob ctx (gcp/package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json"))]
-       {:status 200
-        :body (http/response-body ctx (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"]))})))
+    (println ::remote-addr (svs.http/ctx-remote-addr ctx))
+    (let [pkg-blob (gcp/get-blob ctx (gcp/package-file-name "hl7.fhir.r4.core" "4.0.1" "package.json"))]
+      {:status 200
+       :body (http/response-body ctx (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"]))}))
 
   (http/request ctx {:path "/sandbox"})
 
