@@ -96,6 +96,7 @@
 
   (clear-system-state ctx [:uri])
   (clear-system-state ctx [])
+
   ctx
 
   (start-service

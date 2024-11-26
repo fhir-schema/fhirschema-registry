@@ -13,8 +13,8 @@
    [ring.util.response]
    [cognitect.transit :as transit]
    [cheshire.core]
-   [rpc]
    [svs.logger :as log]
+   [http.routing]
    [org.httpkit.client :as http])
   (:import [java.io BufferedWriter OutputStreamWriter ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
@@ -83,6 +83,33 @@
 (defn ctx-remote-addr [ctx]
   (system/ctx-get ctx ::remote-addr))
 
+(defn parse-route [uri]
+  (->> (str/split (str/replace uri #"(^/|/$)" "") #"/")
+       (mapv (fn [i]
+               (if (str/starts-with? i ":")
+                 [(keyword (subs i 1))]
+                 i)))))
+
+
+(defn register-endpoint [ctx meth url f & [opts]]
+  (let [route (parse-route url)
+        path (into route [meth])]
+    (system/update-system-state
+     ctx [:endpoints]
+     (fn [x] (assoc-in x path (merge {:fn f} opts))))))
+
+
+(defn clear-endpoints [ctx]
+  (system/clear-system-state ctx [:endpoints]))
+
+(defn unregister-endpoint [ctx meth url]
+  (let [route (parse-route url)]
+    (system/clear-system-state ctx (into [:endpoints] (conj route meth)))))
+
+(defn resolve-endpoint [ctx meth url]
+  (let [routes (system/get-system-state ctx [:endpoints])]
+    (http.routing/match [meth url] routes)))
+
 (defn dispatch [system {meth :request-method uri :uri :as req}]
   (let [ctx (system/new-context system {::uri uri ::method meth ::remote-addr (:remote-addr req)})
         ctx (apply-middlewares ctx req)]
@@ -93,17 +120,14 @@
       (and (= "/" uri) (= :get meth))
       (render-index ctx req)
 
-      (and (= "/" uri) (= :post meth))
-      (rpc/proc ctx (parse-body (:body req)) req)
-
       :else
       (let [query-params (parse-params (:query-string req) "UTF-8")]
-        (if-let [op (resolve-operation meth uri)]
+        (if-let [{{f :fn :as op} :match params :params} (resolve-endpoint ctx meth uri)]
           (do
-            (log/info ctx meth uri)
+            (log/info ctx meth uri {:route-params params})
             (->
-             (update (rpc/op ctx (assoc (merge req op) :query-params query-params))
-                     :body (fn [x] (if (map? x) (cheshire.core/generate-string x) x)))
+             (f ctx (assoc (merge req op) :query-params query-params :route-params params))
+             (update :body (fn [x] (if (or (vector? x) (map? x)) (cheshire.core/generate-string x) x)))
              (assoc-in [:headers "content-type"] "application/json")))
           (do
             (log/info ctx meth (str uri " not found" {:http.status 404}))
@@ -133,8 +157,10 @@
         (finally
           (server/close chan))))))
 
+
 (defn request [ctx {path :path}]
-  @(http/get (str "http://localhost:" (system/get-system-state ctx [:port]))))
+  (let [resp @(http/get (str "http://localhost:" (system/get-system-state ctx [:port]) path))]
+    (update resp :body (fn [x] (if (string? x) x (slurp x))))))
 
 (defn start [system config]
   (system/start-service
@@ -152,10 +178,10 @@
 
 (comment
 
-  (defmethod rpc/op :get-test
+  (defn get-test
     [ctx req]
     {:status 200
-     :body (response-body ctx {:message "ok"})})
+     :body (response-body ctx {:message (java.util.Date.) :route-params (:route-params req)})})
 
   (def system (system/new-system {}))
 
@@ -169,14 +195,25 @@
 
   (register-middleware system #'logging-mw)
 
+  (unregister-endpoint system :get "/test")
+  (clear-endpoints system)
+
+  (register-endpoint system :get "/test" #'get-test)
+
+  (register-endpoint system :get "/Patient/:id" #'get-test)
+
+  (resolve-endpoint system :get "/test")
+  (resolve-endpoint system :get "/Patient/pt-1")
+
+  (system/get-system-state system [:endpoints])
+
   (clear-middlewares system)
 
-  (request system {:path "/test"})
-
-  (:body @(http/get "http://localhost:7776/test"))
-
+  (time (request system {:path "/test"}))
+  (time (request system {:path "/Patient/pt-1"}))
 
 
+  (parse-route "/Patient/:id")
 
 
 

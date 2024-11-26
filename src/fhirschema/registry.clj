@@ -4,6 +4,7 @@
    [svs.gcp :as gcp]
    [svs.http :as http]
    [svs.pg :as pg]
+   [svs.logger :as log]
    [clojure.string :as str]
    [cheshire.core :as json]
    [clojure.tools.cli :refer [parse-opts]]
@@ -16,16 +17,11 @@
 (defn to-json [x]
   (json/generate-string x))
 
-(defn start [sys config]
-  (pg/start sys (:pg config))
-  (http/start sys (:http config))
-  (gcp/start sys (:gcp config)))
 
 (defn stop [sys]
   (system/stop-services sys))
 
-(defmethod rpc/op :get-package
-  [ctx _req]
+(defn get-package [ctx _req]
   {:status 200
    :body (pg/execute! ctx ["select * from packages limit 10"])})
 
@@ -36,25 +32,18 @@
                (str/replace #"\." "\\\\."))
        "%"))
 
-(defmethod rpc/op :get-package-lookup
+(defn get-package-lookup
   [ctx {params :query-params :as req}]
   (let [q (mk-query (:name params))]
-    (println :packages q params)
+    (log/info ctx ::packages q params)
     (http/stream
      req
      (fn [wr]
        (pg/fetch ctx  ["select jsonb_build_object('name',name,'versions', versions) as res from package_names where name ilike ?" q]
                  100 "res" (fn [res _i] (wr res)))))))
 
-(defmethod rpc/op :get-fhirschema-old
-  [ctx {params :query-params}]
-  (let [[pkg v] (str/split (or (:package params) "") #":")
-        _ (println :schemas pkg v params)
-        results (pg/execute! ctx ["select resource from fhirschemas where package_name = ? and package_version = ?" pkg v])]
-    {:status 200
-     :body (mapv :resource results)}))
 
-(defmethod rpc/op :get-fhirschema
+(defn get-fhirschema
   [ctx {params :query-params :as req}]
   (let [[pkg v] (str/split (or (:package params) "") #":")]
     (println :schemas pkg v)
@@ -63,13 +52,15 @@
       (http/stream
        req
        (fn [wr]
-         (pg/fetch ctx  ["select resource as res  from fhirschemas where package_name = ? and package_version = ?" pkg v] 100 "res" (fn [res _i] (wr res))))))))
+         (pg/fetch
+          ctx  ["select resource as res  from fhirschemas where package_name = ? and package_version = ?" pkg v] 100 "res"
+          (fn [res _i] (wr res))))))))
 
 
 (def canonicals-summary-sql
   "select row_to_json(c.*) as res from canonicals c where package_name = ? and package_version = ?  order by resourceType, url")
 
-(defmethod rpc/op :get-canonicalresource-summary
+(defn get-canonicalresource-summary
   [ctx {params :query-params :as req}]
   (let [[pkg v] (str/split (or (:package params) "") #":")]
     (println :schemas pkg v)
@@ -127,7 +118,7 @@ ORDER BY dep_name
 
 ")
 
-(defmethod rpc/op :get-package-deps
+(defn get-package-deps
   [ctx {params :query-params :as req}]
   (let [[pkg v] (str/split (or (:package params) "") #":")]
     (println :schemas pkg v)
@@ -151,10 +142,22 @@ ORDER BY dep_name
 
    ["-h" "--help"]])
 
+(defn start [sys _config]
+  (http/register-endpoint sys :get "/Package" #'get-package)
+  (http/register-endpoint sys :get "/Package/$deps" #'get-package-deps)
+  (http/register-endpoint sys :get "/Package/$lookup" #'get-package-lookup)
+  (http/register-endpoint sys :get "/FHIRSchema" #'get-fhirschema))
+
+(defn main [sys config]
+  (pg/start sys (:pg config))
+  (http/start sys (:http config))
+  (gcp/start sys (:gcp config))
+  (start sys config))
+
 (defn -main [& args]
   (let [sys (system/new-system)
         opts (parse-opts args cli-options)]
-    (start sys {:http {:port (get-in opts [:options :port])}})))
+    (main sys {:http {:port (get-in opts [:options :port])}})))
 
 (comment
 
@@ -162,7 +165,11 @@ ORDER BY dep_name
 
   (def pg-conn (json/parse-string (slurp "gcp-connection.json") keyword))
 
-  (start system {:pg pg-conn :http {:port 7777}})
+  (main system {:pg pg-conn :http {:port 7777}})
+
+  (start system {})
+
+  system
 
   (system/stop-services system)
 
@@ -171,7 +178,6 @@ ORDER BY dep_name
   (http/request system {:path "/Package?name=r4"})
 
   (http/request system {:path "/Package/$lookup?name=hl7%20fhir%20core"})
-
 
 
 
