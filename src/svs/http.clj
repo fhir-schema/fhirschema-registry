@@ -14,11 +14,14 @@
    [cognitect.transit :as transit]
    [cheshire.core]
    [svs.logger :as log]
-   [http.routing]
+   [cheshire.generate :as json-gen]
+   [svs.http.routing]
+   [svs.http.formats]
    [org.httpkit.client :as http])
   (:import [java.io BufferedWriter OutputStreamWriter ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util.zip GZIPOutputStream]))
+
 
 (set! *warn-on-reflection* true)
 
@@ -159,15 +162,22 @@
 
 
 (defn request [ctx {path :path}]
-  (let [resp @(http/get (str "http://localhost:" (system/get-system-state ctx [:port]) path))]
-    (update resp :body (fn [x] (if (string? x) x (slurp x))))))
+  (let [url (str "http://localhost:" (system/get-system-state ctx [:port]) path)
+        resp @(http/get url)]
+    (log/info ctx ::get url)
+    (update resp :body (fn [x] (if (string? x) x (if (nil? x) nil (slurp x)))))))
+
+(defn get-open-api [ctx req]
+  {:status 200
+   :body (system/get-system-state ctx [:endpoints])})
 
 (defn start [system config]
   (system/start-service
    system
    (let [port (or (:port config) 7777)]
      (log/info system ::start "start http server" {:port port})
-     {:server (server/run-server (fn [req] (#'dispatch system req)) {:port port}) :port port})))
+     {:server (server/run-server (fn [req] (#'dispatch system req)) {:port port}) :port port}))
+  (register-endpoint system :get "/api" #'get-open-api))
 
 (defn stop [system]
   (system/stop-service
@@ -187,11 +197,11 @@
     (println :HTTP (:uri req))
     ctx)
 
-  (def system (system/new-system {}))
+  (def system (system/start-system {:services ["svs.http"] :svs.http {:port 7776}}))
 
-  (start system {:port 7776})
+  (request system {:path "/api"})
+
   (stop system)
-
 
   (register-middleware system #'logging-mw)
 
@@ -210,11 +220,10 @@
   (clear-middlewares system)
 
   (time (request system {:path "/test"}))
-  (time (request system {:path "/Patient/pt-1"}))
+  (request system {:path "/Patient/pt-1"})
 
 
   (parse-route "/Patient/:id")
-
 
 
 

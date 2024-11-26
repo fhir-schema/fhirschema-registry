@@ -25,9 +25,6 @@
 (defmacro get-state [system]
   `(-get-state ~system ~(keyword (.getName *ns*))))
 
-(defmacro get-state-from-ctx [ctx]
-  `(-get-state (get ~ctx :system) ~(keyword (.getName *ns*))))
-
 (defn -set-system-state [system key path value]
   (swap! system assoc-in (into [key] path) value))
 

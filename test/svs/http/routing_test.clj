@@ -1,6 +1,6 @@
-(ns http.routing-test
+(ns svs.http.routing-test
   (:require [clojure.test :refer :all]
-            [http.routing :as rm]
+            [svs.http.routing :as rm]
             [matcho.core :as matcho]
             [clojure.string :as str]))
 
