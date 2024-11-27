@@ -8,10 +8,13 @@
   (log/info ctx ::auth (pr-str (keys req)))
   ctx)
 
-(defn start [ctx & [config]]
-  (system/start-service ctx
-   (http/register-middleware ctx #'authorize)))
+(system/defmanifest
+  {:description "provide jwt interceptor"})
 
-(defn stop [ctx & [config]])
+(system/defstart [context config]
+  (http/register-middleware context #'authorize)
+  {})
+
+(system/defstop [context state])
 
 

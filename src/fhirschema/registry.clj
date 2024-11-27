@@ -165,7 +165,7 @@ ORDER BY dep_name
 (comment
 
   (def pg-conn (json/parse-string (slurp "gcp-connection.json") keyword))
-  (def context (main {:svs.pg pg-conn :svs.http {:port 7777}}))
+  (def context (main {:svs.pg pg-conn :svs.http {:port 7777} :fhirschema.registry {:terminology-server "http://???"}}))
 
   (system/stop-system context)
 

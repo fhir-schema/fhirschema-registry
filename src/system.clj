@@ -74,7 +74,8 @@
     `(when-not (contains? (:services @(:system ~ctx)) '~key)
        (swap! (:system ~ctx) update :services (fn [x#] (conj (or x# #{}) '~key)))
        (let [state# (do ~@body)]
-         (merge-system-state ~ctx [] state#)))))
+         (merge-system-state ~ctx [] state#)
+         (println :start-module ~(name key))))))
 
 (defmacro defstart [params & body]
   (assert (= 2 (count params)))
@@ -123,9 +124,11 @@
     (doseq [svs services]
       (require (symbol svs))
       (when-let [manifest (resolve (symbol (name svs) "manifest"))]
-        (println :MANIFEST svs (var-get manifest)))
+        (println :register-module svs (var-get manifest))))
+    (doseq [svs services]
       (when-let [start-fn (resolve (symbol (name svs) "start"))]
         (start-fn system (get config (keyword svs) {}))))
+
     system))
 
 (defn stop-system [ctx]
@@ -142,6 +145,8 @@
 ;; TODO: make register module using manifest
 ;; on module registration it register all config params
 ;; this params are used to validate before start
+
+;; bring modules to the top level
 
 (comment
   (require ['svs.pg])
