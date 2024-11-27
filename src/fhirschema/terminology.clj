@@ -1,6 +1,6 @@
 (ns fhirschema.terminology
-  (:require [svs.pg :as pg]
-            [svs.gcp]
+  (:require [pg :as pg]
+            [gcp]
             [cheshire.core]
             [clj-yaml.core]
             [clojure.string :as str]

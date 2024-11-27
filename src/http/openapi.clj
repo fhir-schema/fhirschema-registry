@@ -1,6 +1,6 @@
-(ns svs.http.openapi
+(ns http.openapi
   (:require [system]
-            [svs.http :as http]))
+            [http :as http]))
 
 (defn get-open-api [context req]
   {:status 200

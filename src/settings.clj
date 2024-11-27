@@ -1,6 +1,6 @@
-(ns svs.settings
+(ns settings
   (:require [system]
-            [svs.pg]))
+            [pg]))
 
 (system/defmanifest
   {:description "manage dynamic settings"})

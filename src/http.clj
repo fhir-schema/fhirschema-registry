@@ -1,4 +1,4 @@
-(ns svs.http
+(ns http
   (:require
    [system]
    [cheshire.core]
@@ -13,10 +13,10 @@
    [ring.util.response]
    [cognitect.transit :as transit]
    [cheshire.core]
-   [svs.logger :as log]
+   [logger :as log]
    [cheshire.generate :as json-gen]
-   [svs.http.routing]
-   [svs.http.formats]
+   [http.routing]
+   [http.formats]
    [org.httpkit.client :as http])
   (:import [java.io BufferedWriter OutputStreamWriter ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
@@ -116,7 +116,7 @@
 
 (defn resolve-endpoint [ctx meth url]
   (let [routes (get-routes ctx)]
-    (svs.http.routing/match [meth url] routes)))
+    (http.routing/match [meth url] routes)))
 
 (defn on-request-hooks [ctx params]
   (doseq [on-request-hook (system/get-hooks ctx ::on-request)]
@@ -218,7 +218,7 @@
     (println :HTTP (:uri req))
     ctx)
 
-  (def context (system/start-system {:services ["svs.http" "svs.http.openapi"] :svs.http {:port 7772}}))
+  (def context (system/start-system {:services ["http" "http.openapi"] :http {:port 7772}}))
 
   (system/get-system-state context [])
 

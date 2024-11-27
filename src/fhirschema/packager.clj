@@ -5,7 +5,7 @@
    [clojure.string :as str]
    [clojure.java.shell :refer [sh]]
    [pjson.core :as pjson]
-   [svs.gcp]
+   [gcp]
    [utils.ndjson])
   (:import
    [java.nio.file Path Paths Files]

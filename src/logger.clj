@@ -1,4 +1,4 @@
-(ns svs.logger
+(ns logger
   (:require [system]))
 
 (def default-config {:level :info})

@@ -1,10 +1,10 @@
 (ns fhirschema.registry
   (:require
    [system]
-   [svs.gcp :as gcp]
-   [svs.http :as http]
-   [svs.pg :as pg]
-   [svs.logger :as log]
+   [gcp :as gcp]
+   [http :as http]
+   [pg :as pg]
+   [logger :as log]
    [clojure.string :as str]
    [cheshire.core :as json]
    [clojure.tools.cli :refer [parse-opts]])
@@ -155,17 +155,17 @@ ORDER BY dep_name
 (defn main [config]
   (system/start-system
    (assoc config
-          :services ["svs.pg" "svs.http" "svs.http.openapi" "svs.gcp" "fhirschema.registry"]
-          :svs.pg (cheshire.core/parse-string (slurp "connection.json") keyword))))
+          :services ["pg" "http" "http.openapi" "gcp" "fhirschema.registry"]
+          :pg (cheshire.core/parse-string (slurp "connection.json") keyword))))
 
 (defn -main [& args]
   (let [opts (parse-opts args cli-options)]
-    (main {:svs.http {:port (get-in opts [:options :port])}})))
+    (main {:http {:port (get-in opts [:options :port])}})))
 
 (comment
 
   (def pg-conn (json/parse-string (slurp "gcp-connection.json") keyword))
-  (def context (main {:svs.pg pg-conn :svs.http {:port 7777} :fhirschema.registry {:terminology-server "http://???"}}))
+  (def context (main {:pg pg-conn :http {:port 7777} :fhirschema.registry {:terminology-server "http://???"}}))
 
   (system/stop-system context)
 

@@ -1,6 +1,6 @@
-(ns svs.pg
+(ns pg
   (:require
-   [svs.logger :as log]
+   [logger :as log]
    [system]
    [clojure.string :as str]
    [clojure.java.io :as io]
@@ -218,8 +218,8 @@
 
   (def conn (cheshire.core/parse-string (slurp "connection.json") keyword))
   (def context (system/start-system
-                {:services ["svs.pg"]
-                 :svs.pg conn}))
+                {:services ["pg"]
+                 :pg conn}))
 
   (system/stop-system context)
 
@@ -233,13 +233,13 @@
               (w (cheshire.core/generate-string {:a i}))))))
 
   (execute! context ["select count(*) from test"])
-  (svs.logger/set-system-level context :error)
-  (svs.logger/set-system-level context :debug)
+  (logger/set-system-level context :error)
+  (logger/set-system-level context :debug)
 
-  (svs.logger/get-system-level context)
-  (svs.logger/error context ::test "msg")
-  (svs.logger/info context ::test "msg")
-  (svs.logger/debug context ::test "msg")
+  (logger/get-system-level context)
+  (logger/error context ::test "msg")
+  (logger/info context ::test "msg")
+  (logger/debug context ::test "msg")
 
   context
 

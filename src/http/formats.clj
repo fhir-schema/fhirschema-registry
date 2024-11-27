@@ -1,4 +1,4 @@
-(ns svs.http.formats
+(ns http.formats
   (:require
     [cheshire.core :as json]
     [cheshire.parse :as json-parse]

@@ -1,8 +1,8 @@
 (ns sandbox
   (:require [system]
-            [svs.gcp :as gcp]
-            [svs.http :as http]
-            [svs.pg :as pg]
+            [gcp :as gcp]
+            [http :as http]
+            [pg :as pg]
             [cheshire.core]
             [clj-yaml.core]
             [clojure.string :as str]
@@ -17,16 +17,16 @@
   (def sys (system/new-system))
 
   (system/start sys
-   ['svs.http 'svs.pg 'svs.gcp]
-   {:svs.http {:port 8081}
-    :svs.pluggins {:list ["plugins.auth-jwt"]}})
+   ['http 'pg 'gcp]
+   {:http {:port 8081}
+    :pluggins {:list ["plugins.auth-jwt"]}})
 
-  (svs.settings/set ctx :svs.http/port 8087)
+  (settings/set ctx :http/port 8087)
 
-  ;; --svs.logger/level INFO
-  ;; --svs.http/port 8081
-  ;; --svs.plugins/list plugins.auth-jwt,
-  ;; --svs.pg/database fhirschema
+  ;; --logger/level INFO
+  ;; --http/port 8081
+  ;; --plugins/list plugins.auth-jwt,
+  ;; --pg/database fhirschema
   ;; --auth.auth-jwt/url http://some-url/well-known
 
   (def system (system/new-system {}))

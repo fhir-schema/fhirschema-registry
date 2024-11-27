@@ -1,5 +1,5 @@
 (ns fhirschema.registry.tmp
-  (:require [svs.pg :as pg]))
+  (:require [pg :as pg]))
 
 (defn init [ctx]
   (pg/execute! ctx ["

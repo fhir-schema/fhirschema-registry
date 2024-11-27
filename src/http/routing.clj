@@ -1,4 +1,4 @@
-(ns svs.http.routing
+(ns http.routing
   (:require [clojure.string :as str]))
 
 (defn pathify [path]

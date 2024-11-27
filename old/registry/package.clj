@@ -1,6 +1,6 @@
 (ns fhirschema.registry.package
-  (:require [svs.gcp :as gcp]
-            [svs.pg :as pg]))
+  (:require [gcp :as gcp]
+            [pg :as pg]))
 
 
 (comment

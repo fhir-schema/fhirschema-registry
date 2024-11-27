@@ -1,8 +1,8 @@
 (ns plugins.auth-jwt
   (:require
    [system]
-   [svs.http :as http]
-   [svs.logger :as log]))
+   [http :as http]
+   [logger :as log]))
 
 (defn authorize [ctx req]
   (log/info ctx ::auth (pr-str (keys req)))

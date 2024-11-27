@@ -1,9 +1,9 @@
 (ns fhirschema.registry.core
   (:require
    [system]
-   [svs.gcp :as gcp]
-   [svs.http :as http]
-   [svs.pg :as pg]
+   [gcp :as gcp]
+   [http :as http]
+   [pg :as pg]
    [clojure.string :as str]
    [cheshire.core :as json]
    [clojure.tools.cli :refer [parse-opts]]

@@ -149,8 +149,8 @@
 ;; bring modules to the top level
 
 (comment
-  (require ['svs.pg])
-  (require ['svs.ups])
+  (require ['pg])
+  (require ['ups])
 
   (def system (new-system {}))
   system
@@ -177,11 +177,11 @@
 
   (def pg-system
     (start-system
-     {:services ["svs.pg"]
-      :svs.pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+     {:services ["pg"]
+      :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
 
   (stop-system pg-system)
 
-  (svs.pg/execute! pg-system ["select 1"])
+  (pg/execute! pg-system ["select 1"])
 
   )

@@ -1,4 +1,4 @@
-(ns svs.gcp
+(ns gcp
   (:require [clojure.string :as str]
             [utils.ndjson :as ndjson]
             [system]
