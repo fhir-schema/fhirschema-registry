@@ -31,7 +31,7 @@
   (when (<= (system/get-system-state ctx [:level] 1) 0)
     (println :debug (merge params {:event.name ev :message msg :level "DEBUG" :timestamp (java.util.Date.)}))))
 
-(def manifest
+(system/defmanifest
   {:description "This is a logger module"
    :deps []
    :config

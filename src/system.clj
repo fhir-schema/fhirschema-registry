@@ -1,5 +1,16 @@
-(ns system)
+(ns system
+  (:require [system.config]
+            [clojure.spec.alpha :as s]))
 ;; TODO: rewrite start with context
+
+(s/def ::config :system.config/config-spec)
+(s/def ::descripton string?)
+(s/def ::manifest (s/keys :opt-un [::config ::description]))
+
+(defmacro defmanifest [manifest]
+  (when-not (s/valid? ::manifest manifest)
+    (throw (ex-info "Invalid manifest" (s/explain-data ::manifest manifest))))
+  (list 'def 'manifest manifest))
 
 (defn new-system [ & [config]]
   {:system (atom {:system/config (or config {})})})

@@ -190,14 +190,14 @@
 
 (meta #'log/manifest)
 
-(def manifest
+(system/defmanifest
   {:description "postgresql service"
    :deps [#'log/manifest]
    :config
    {:port      {:type "integer" :default 5432 :validator pos-int?}
-    :host      {:type "string" :required true}
-    :database  {:type "string" :required true}
-    :password  {:type "string" :sensitive true :required true}
+    :host      {:type "string"  :required true}
+    :database  {:type "string"  :required true}
+    :password  {:type "string"  :sensitive true :required true}
     :pool-size {:type "integer" :default 5 :validator pos-int?}}})
 
 (comment

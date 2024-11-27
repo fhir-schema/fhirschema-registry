@@ -199,7 +199,7 @@
    (when-let [stop (system/get-system-state system [:server])]
      (stop))))
 
-(def manifest
+(system/defmanifest
   {:description "http server module"
    :deps [#'log/manifest]
    :config

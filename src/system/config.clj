@@ -1,6 +1,19 @@
 (ns system.config
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure.spec.alpha :as s]))
 
+(s/def ::type #{"string" "string[]" "integer" "number" "keyword"})
+(s/def ::default any?)
+(s/def ::required boolean?)
+(s/def ::sensitive boolean?)
+(s/def ::validator ifn?)
+
+(s/def ::field-config
+  (s/keys :req-un [::type]
+          :opt-un [::default ::required ::sensitive ::validator]))
+
+(s/def ::config-spec
+  (s/map-of keyword? ::field-config))
 
 (defn parse-int [s]
   (if (and (string? s) (re-matches #"^[-+]?[0-9]+$" s))
@@ -93,8 +106,12 @@
              :host      {:type "string" :required true}
              :database  {:type "string" :required true}
              :password  {:type "string" :sensitive true :required true}
-             :pool-size {:type "integer" :default 5 :validator #'pos-int?}
+             :pool-size {:type "integer" :default 5 :validator #'pos-int? :required 1}
              :timeout   {:type "integer" :validator #'pos-int?}})
+
+
+  (s/valid? ::config-spec sch)
+  (s/explain-data ::config-spec sch)
 
   (coerce sch {:port "5432" :pool-size "-1" :host 4 :timeout 10})
   (validate sch {:port "5432" :pool-size -1 :host 4 :timeout 10})
