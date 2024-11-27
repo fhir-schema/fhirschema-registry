@@ -98,6 +98,7 @@
 (defn register-endpoint [ctx meth url f & [opts]]
   (let [route (parse-route url)
         path (into route [meth])]
+    (log/info ctx ::register-endpoint (str meth " " url " -> " f))
     (system/update-system-state
      ctx [:endpoints]
      (fn [x] (assoc-in x path (merge {:fn f} opts))))))
@@ -110,8 +111,11 @@
   (let [route (parse-route url)]
     (system/clear-system-state ctx (into [:endpoints] (conj route meth)))))
 
+(defn get-routes [ctx]
+  (system/get-system-state ctx [:endpoints]))
+
 (defn resolve-endpoint [ctx meth url]
-  (let [routes (system/get-system-state ctx [:endpoints])]
+  (let [routes (get-routes ctx)]
     (svs.http.routing/match [meth url] routes)))
 
 (defn on-request-hooks [ctx params]
@@ -147,7 +151,8 @@
              (format-response ctx)))
           (do
             (log/info ctx meth (str uri " not found" {:http.status 404}))
-            {:status 404}))))))
+            {:status 404
+             :body (str meth " " uri " is not found")}))))))
 
 (defn stream [req cb]
   (server/with-channel req chan
@@ -180,24 +185,6 @@
     (log/info ctx ::get url)
     (update resp :body (fn [x] (if (string? x) x (if (nil? x) nil (slurp x)))))))
 
-(defn get-open-api [ctx req]
-  {:status 200
-   :body (system/get-system-state ctx [:endpoints])})
-
-(defn start [system config]
-  (system/start-service
-   system
-   (let [port (or (:port config) 7777)]
-     (log/info system ::start "start http server" {:port port})
-     {:server (server/run-server (fn [req] (#'dispatch system req)) {:port port}) :port port}))
-  (system/manifest-hook system ::on-request {:desc "This hook is called on request and passed method, uri and params"})
-  (register-endpoint system :get "/api" #'get-open-api))
-
-(defn stop [system]
-  (system/stop-service
-   system
-   (when-let [stop (system/get-system-state system [:server])]
-     (stop))))
 
 (system/defmanifest
   {:description "http server module"
@@ -207,6 +194,18 @@
     {:type "integer"
      :default 8080
      :validator pos-int?}}})
+
+(system/defstart [context config]
+  (let [port (or (:port config) 7777)]
+    (log/info context ::start "start http server" {:port port})
+    ;; TODO: move to manifest
+    (system/manifest-hook context ::on-request {:desc "This hook is called on request and passed method, uri and params"})
+    {:server (server/run-server (fn [req] (#'dispatch context req)) {:port port}) :port port}))
+
+(system/defstop [context state]
+  (when-let [stop (:server state)]
+    (stop)))
+
 
 (comment
 
@@ -219,39 +218,46 @@
     (println :HTTP (:uri req))
     ctx)
 
-  (def system (system/start-system {:services ["svs.http"] :svs.http {:port 7776}}))
+  (def context (system/start-system {:services ["svs.http" "svs.http.openapi"] :svs.http {:port 7772}}))
 
-  (request system {:path "/api"})
+  (system/get-system-state context [])
 
-  (stop system)
+  context
 
-  (register-middleware system #'logging-mw)
+  (system/stop-system context)
 
-  (unregister-endpoint system :get "/test")
-  (clear-endpoints system)
+  (request context {:path "/api"})
 
-  (register-endpoint system :get "/test" #'get-test)
+  (register-middleware context #'logging-mw)
 
-  (register-endpoint system :get "/Patient/:id" #'get-test)
+  (register-endpoint context :get "/test" #'get-test)
+  (register-endpoint context :get "/Patient/:id" #'get-test)
 
-  (resolve-endpoint system :get "/test")
-  (resolve-endpoint system :get "/Patient/pt-1")
+  (request context {:path "/test"})
 
-  (system/get-system-state system [:endpoints])
+  (unregister-endpoint context :get "/test")
+  (clear-endpoints context)
 
-  (clear-middlewares system)
 
-  (time (request system {:path "/test"}))
-  (request system {:path "/Patient/pt-1"})
+
+  (resolve-endpoint context :get "/test")
+  (resolve-endpoint context :get "/Patient/pt-1")
+
+  (system/get-system-state context [:endpoints])
+
+  (clear-middlewares context)
+
+  (time (request context {:path "/test"}))
+  (request context {:path "/Patient/pt-1"})
 
 
   (parse-route "/Patient/:id")
 
   (defn on-request-hook [ctx params] (println :HOOK params))
 
-  (system/register-hook system ::on-request #'on-request-hook)
+  (system/register-hook context ::on-request #'on-request-hook)
 
-  (request system {:path "/api"})
+  (request context {:path "/api"})
 
 
   )

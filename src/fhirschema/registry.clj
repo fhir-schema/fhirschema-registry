@@ -7,8 +7,7 @@
    [svs.logger :as log]
    [clojure.string :as str]
    [cheshire.core :as json]
-   [clojure.tools.cli :refer [parse-opts]]
-   [rpc])
+   [clojure.tools.cli :refer [parse-opts]])
   (:gen-class))
 
 (defn from-json [x]
@@ -17,9 +16,6 @@
 (defn to-json [x]
   (json/generate-string x))
 
-
-(defn stop [sys]
-  (system/stop-system sys))
 
 (defn get-package [ctx _req]
   {:status 200
@@ -142,17 +138,24 @@ ORDER BY dep_name
 
    ["-h" "--help"]])
 
-(defn start [sys _config]
-  (http/register-endpoint sys :get "/Package" #'get-package)
-  (http/register-endpoint sys :get "/Package/$deps" #'get-package-deps)
-  (http/register-endpoint sys :get "/Package/$lookup" #'get-package-lookup)
-  (http/register-endpoint sys :get "/FHIRSchema" #'get-fhirschema)
-  (log/info sys ::started "started"))
+(system/defmanifest
+  {:description "package api"}
+  )
+
+(system/defstart [context _config]
+  (http/register-endpoint context :get "/Package" #'get-package)
+  (http/register-endpoint context :get "/Package/$deps" #'get-package-deps)
+  (http/register-endpoint context :get "/Package/$lookup" #'get-package-lookup)
+  (http/register-endpoint context :get "/FHIRSchema" #'get-fhirschema)
+  (log/info context ::started "started")
+  {})
+
+(system/defstop [context state])
 
 (defn main [config]
   (system/start-system
    (assoc config
-          :services ["svs.pg" "svs.http" "svs.gcp" "fhirschema.registry"]
+          :services ["svs.pg" "svs.http" "svs.http.openapi" "svs.gcp" "fhirschema.registry"]
           :svs.pg (cheshire.core/parse-string (slurp "connection.json") keyword))))
 
 (defn -main [& args]
@@ -162,14 +165,14 @@ ORDER BY dep_name
 (comment
 
   (def pg-conn (json/parse-string (slurp "gcp-connection.json") keyword))
-  (def system (main {:svs.pg pg-conn :svs.http {:port 7777}}))
+  (def context (main {:svs.pg pg-conn :svs.http {:port 7777}}))
 
-  (system/stop-system system)
+  (system/stop-system context)
 
-  (stop system)
+  (http/request context {:path "/api"})
 
-  (http/request system {:path "/Package?name=r4"})
+  (http/request context {:path "/Package?name=r4"})
 
-  (http/request system {:path "/Package/$lookup?name=hl7%20fhir%20core"})
+  (http/request context {:path "/Package/$lookup?name=hl7%20fhir%20core"})
 
   )

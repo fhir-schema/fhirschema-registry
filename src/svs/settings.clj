@@ -2,9 +2,9 @@
   (:require [system]
             [svs.pg]))
 
-(defn start [ctx cfg]
+(system/defmanifest
+  {:description "manage dynamic settings"})
 
-  )
+(system/defstart [context config])
 
-(defn stop [ctx cfg]
-  )
+(system/defstop [context state])

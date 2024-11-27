@@ -56,6 +56,13 @@
 (defmacro update-system-state [ctx path f]
   `(-update-system-state (:system ~ctx) ~(keyword (.getName *ns*)) ~path ~f))
 
+(defn -merge-system-state [system key path state]
+  (swap! system update-in (into [key] path)
+         (fn [st] (merge st state))))
+
+(defmacro merge-system-state [ctx path state]
+  `(-merge-system-state (:system ~ctx) ~(keyword (.getName *ns*)) ~path ~state))
+
 (defn -get-system-state [system key path default]
   (get-in @system (into [key] path) default))
 
@@ -66,7 +73,14 @@
   (let [key (.getName *ns*)]
     `(when-not (contains? (:services @(:system ~ctx)) '~key)
        (swap! (:system ~ctx) update :services (fn [x#] (conj (or x# #{}) '~key)))
-       (set-system-state ~ctx [] (do ~@body)))))
+       (let [state# (do ~@body)]
+         (merge-system-state ~ctx [] state#)))))
+
+(defmacro defstart [params & body]
+  (assert (= 2 (count params)))
+  (let [fn-name 'start]
+    `(defn ~fn-name ~params
+       (start-service ~(first params) ~@body))))
 
 (defmacro stop-service [ctx & body]
   (let [key (.getName *ns*)]
@@ -74,6 +88,12 @@
        ~@body
        (swap! (:system ~ctx) update :services (fn [x#] (when x# (disj x# '~key))))
        (clear-system-state ~ctx []))))
+
+(defmacro defstop [params & body]
+  (assert (= 2 (count params)))
+  (let [fn-name 'stop]
+    `(defn ~fn-name ~params
+       (stop-service ~(first params) ~@body))))
 
 (defn ctx-get [ctx & path]
   (get-in ctx path))
@@ -109,13 +129,16 @@
     system))
 
 (defn stop-system [ctx]
-  (doseq [sv (:services @(:system ctx))]
-    (require [sv])
-    (when-let [stop-fn (resolve (symbol (name sv) "stop"))]
-      (println :stop stop-fn)
-      (println :> (stop-fn ctx)))))
+  (let [system @(:system ctx)]
+    (doseq [sv (:services system)]
+      (require [sv])
+      (when-let [stop-fn (resolve (symbol (name sv) "stop"))]
+        (println :stop stop-fn)
+        (println :> (stop-fn ctx (get system (keyword (name sv)))))))))
 
 ;; TODO: get rid of start-service and stop-service
+;; TODO: pass service state to stop
+;; TODO: rename service into module - more generic
 ;; TODO: make register module using manifest
 ;; on module registration it register all config params
 ;; this params are used to validate before start
@@ -143,9 +166,7 @@
 
   ctx
 
-  (start-service
-   system
-   (println :ok))
+  (start-service system (println :ok))
 
   (stop-system system)
 

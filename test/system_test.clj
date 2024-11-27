@@ -4,8 +4,14 @@
             [system]))
 
 (system/defmanifest
-  {:config {:param {:required true :type "string"}}}
-  )
+  {:config {:param {:required true :type "string"}}})
+
+(defn start [ctx config]
+  (println :start config)
+  {:service {:name "svs"}})
+
+(defn stop [ctx]
+  (println :stop))
 
 (deftest basic-test
 
@@ -20,6 +26,13 @@
   (system/clear-system-state sys [:var])
 
   (is (nil? (system/get-system-state sys [:var])))
+
+  ;; should fail
+  (def sys1
+    (system/start-system {:services ["system-test"]
+                          :system-test {:param 1}}))
+
+  (system/stop-system sys1)
 
 
   )

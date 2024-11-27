@@ -24,14 +24,6 @@
 
 (def DEFAULT_BUCKET "fs.get-ig.org")
 
-(defn start [context & [cfg]]
-  (system/start-service context
-   {:svc (mk-service cfg)
-    :bucket (or (:default/bucket cfg) DEFAULT_BUCKET)}))
-
-(defn stop [context]
-  (system/stop-service context
-   (println :gcp/stop)))
 
 (defn get-service [context]
   (system/get-system-state context [:svc]))
@@ -92,6 +84,16 @@
     (if gz (GZIPOutputStream. os) os)))
 
 (set! *warn-on-reflection* false)
+
+
+(system/defmanifest
+  {:description "Provide gcp services"})
+
+(system/defstart [context cfg]
+  {:svc (mk-service cfg)
+   :bucket (or (:default/bucket cfg) DEFAULT_BUCKET)})
+
+(system/defstop [context state])
 
 ;; (defn write-blob [storage bucket file cb]
 ;;   (with-open

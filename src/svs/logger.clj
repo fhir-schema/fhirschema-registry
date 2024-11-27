@@ -6,10 +6,6 @@
 (def levels
   {:debug 0 :info 1 :error 2})
 
-(defn start [system config]
-  (system/start-service system (update (merge default-config config) :level #(get levels %))))
-
-(defn stop [system])
 
 (defn reload-level [ctx new-level])
 
@@ -42,3 +38,8 @@
             :on-change #'reload-level}
     :loggers {:type "string"
               :enum ["json" "file" "elastic" "lokki"]}}})
+
+(system/defstart [system config]
+  (update (merge default-config config) :level #(get levels %)))
+
+(system/defstop [system state])

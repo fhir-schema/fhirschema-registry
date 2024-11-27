@@ -172,7 +172,7 @@
 (defn default-connection []
   (cheshire.core/parse-string (slurp "connection.json") keyword))
 
-(defn start [system & [opts]]
+#_(defn start [system & [opts]]
   (system/start-service
    system
    (let [connection (or opts (default-connection))
@@ -182,13 +182,11 @@
      (log/info system ::connected (:database connection) (dissoc connection :password))
      {:datasource db :connection/info connection})))
 
-(defn stop [system]
+#_(defn stop [system]
   (system/stop-service
    system
    (when-let [^HikariDataSource conn (system/get-system-state system [:datasoruce])]
      (.close conn))))
-
-(meta #'log/manifest)
 
 (system/defmanifest
   {:description "postgresql service"
@@ -200,16 +198,30 @@
     :password  {:type "string"  :sensitive true :required true}
     :pool-size {:type "integer" :default 5 :validator pos-int?}}})
 
+(system/defstart
+  [context config]
+  (let [connection (or config (default-connection))
+        _ (log/info context ::connecting (:database connection) (dissoc connection :password))
+        db (get-pool connection)]
+    (jdbc/execute! db ["select 1"])
+    (log/info context ::connected (:database connection) (dissoc connection :password))
+    {:datasource db :connection/info connection}))
+
+(system/defstop
+  [context state]
+  (when-let [^HikariDataSource conn (:datasource state)]
+    (log/info context ::close "close connections")
+    (.close conn)))
+
+
 (comment
-  (def context (system/new-system {}))
 
   (def conn (cheshire.core/parse-string (slurp "connection.json") keyword))
-  (start context conn)
-
-  context
+  (def context (system/start-system
+                {:services ["svs.pg"]
+                 :svs.pg conn}))
 
   (system/stop-system context)
-  (stop context)
 
   (execute! context ["select 1"])
   (execute! context ["create table if not exists test  (resoruce jsonb)"])
