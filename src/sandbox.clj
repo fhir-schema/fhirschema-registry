@@ -1,7 +1,8 @@
 (ns sandbox
   (:require [system]
-            [gcp :as gcp]
-            [http :as http]
+            [gcs]
+            [http]
+            [fhir-pkg]
             [pg :as pg]
             [cheshire.core]
             [clj-yaml.core]
@@ -14,36 +15,20 @@
   (spit "/tmp/dump.yaml" (clj-yaml.core/generate-string x)))
 
 (comment
-  (def sys (system/new-system))
 
-  (system/start sys
-   ['http 'pg 'gcp]
-   {:http {:port 8081}
-    :pluggins {:list ["plugins.auth-jwt"]}})
+  (def context (system/start-system {:services ["pg" "gcs" "fhir-pkg"]
+                                     :http {:port 7777}
+                                     :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
 
-  (settings/set ctx :http/port 8087)
+  (def pkgi (fhir-pkg/pkg-info context "hl7.fhir.us.core"))
 
-  ;; --logger/level INFO
-  ;; --http/port 8081
-  ;; --plugins/list plugins.auth-jwt,
-  ;; --pg/database fhirschema
-  ;; --auth.auth-jwt/url http://some-url/well-known
+  pkgi
 
-  (def system (system/new-system {}))
+  (fhir-pkg/read-package context pkgi (fn [nm read-file] (println nm)))
 
+  (system/stop-system context)
 
-  (http/start system {:port 3334})
-  (gcp/start system)
-  (pg/start system)
-
-  (gcp/stop system)
-  (http/stop system)
-
-  (def ctx (system/new-context system))
-
-  (http/request ctx {:path "/sandbox"})
-
-  (pg/execute! ctx ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
+  (pg/execute! context ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
 
   (pg/execute!
    ctx ["
@@ -97,20 +82,20 @@ limit 10"])
                      (clj-yaml.core/generate-string [(translate r) r])))))
 
 
-  (def storage (gcp/mk-storage))
+  (def storage (gcs/mk-storage))
 
   (def pkgs
     (time
-     (->> (gcp/objects)
+     (->> (gcs/objects)
           (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
-          (pmap (fn [x] (gcp/blob-content x {:json true})))
+          (pmap (fn [x] (gcs/blob-content x {:json true})))
           (into []))))
 
   (count pkgs)
   (mapv (fn [x] [(:name x) (:version x)]) pkgs)
 
-  (def blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/structuredefinition.ndjson.gz"))
-  (def sds (gcp/read-ndjson-blob blb))
+  (def blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/structuredefinition.ndjson.gz"))
+  (def sds (gcs/read-ndjson-blob blb))
 
   (def bindings 
     (->> sds
@@ -138,12 +123,12 @@ limit 10"])
 
   (defn url-idx [xs] (->> xs (reduce (fn [acc x] (assoc acc (:url x) x)) {})))
 
-  (def cs-blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
-  (def codesystems (gcp/read-ndjson-blob cs-blb))
+  (def cs-blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
+  (def codesystems (gcs/read-ndjson-blob cs-blb))
   (def cs-idx (url-idx codesystems))
 
-  (def vs-blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/valueset.ndjson.gz"))
-  (def valuesets (gcp/read-ndjson-blob vs-blb))
+  (def vs-blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/valueset.ndjson.gz"))
+  (def valuesets (gcs/read-ndjson-blob vs-blb))
   (def vs-idx (url-idx valuesets))
 
   (count (keys vs-idx))
@@ -174,12 +159,12 @@ limit 10"])
   (count resource-binding-set)
 
 
-  (def cs-blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
-  (def codesystems (gcp/read-ndjson-blob cs-blb))
+  (def cs-blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
+  (def codesystems (gcs/read-ndjson-blob cs-blb))
 
-  (def cs-b (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
+  (def cs-b (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
 
-  (time (gcp/blob-stream cs-b {:gzip true} (fn [in] (pg/copy-ndjson-stream ctx "cs" in))))
+  (time (gcs/blob-stream cs-b {:gzip true} (fn [in] (pg/copy-ndjson-stream ctx "cs" in))))
 
   (pg/execute! ctx ["create table cs (resource jsonb)"])
 
@@ -192,14 +177,14 @@ limit 10"])
   (do
     (pg/execute! ctx ["truncate tcs; truncate tcs_concept"])
     (time
-     (let [pkg (gcp/blob-content  (gcp/package-file "hl7.fhir.r4.core" "4.0.1" "package.json") {:json true})
+     (let [pkg (gcs/blob-content  (gcs/package-file "hl7.fhir.r4.core" "4.0.1" "package.json") {:json true})
            pkg-fields {:package (:name pkg) :package_version (:version pkg)}]
        (pg/copy-ndjson ctx "tcs_concept"
                        (fn [csc-write]
                          (pg/copy-ndjson ctx "tcs"
                                          (fn [cs-write]
-                                           (gcp/process-ndjson-blob
-                                            (gcp/package-file "hl7.fhir.r4.core" "4.0.1" "codesystem.ndjson.gz")
+                                           (gcs/process-ndjson-blob
+                                            (gcs/package-file "hl7.fhir.r4.core" "4.0.1" "codesystem.ndjson.gz")
                                             (fn [res _ln]
                                               (let [tcs (fhirschema.terminology/tiny-codesystem res)]
                                                 (cs-write (merge (dissoc tcs :concept) pkg-fields))
@@ -209,7 +194,7 @@ limit 10"])
                                                                       pkg-fields))))))))))))))
 
   (time
-   (gcp/process-ndjson-blob (gcp/package-file "hl7.fhir.r4.core" "4.0.1" "structuredefinition.ndjson.gz")
+   (gcs/process-ndjson-blob (gcs/package-file "hl7.fhir.r4.core" "4.0.1" "structuredefinition.ndjson.gz")
     (fn [res ln] (println ln (:url res) (:kind res) (:derivation res)))))
 
   (pg/execute! ctx ["select * from tcs where resource->>'content' <> 'complete' limit 10"])
@@ -226,18 +211,18 @@ limit 10"])
 
   (def pkgs
     (time
-     (->> (gcp/objects)
+     (->> (gcs/objects)
           (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
-          (pmap (fn [x] (gcp/blob-content x {:json true})))
+          (pmap (fn [x] (gcs/blob-content x {:json true})))
           (into []))))
 
   (pg/copy-ndjson
    ctx "packages"
    (fn [write]
-     (->> (gcp/objects)
+     (->> (gcs/objects)
           (filterv (fn [x] (str/ends-with? (.getName x) "package.json")))
           (pmap (fn [x]
-                  (let [pkg (gcp/blob-content x {:json true})]
+                  (let [pkg (gcs/blob-content x {:json true})]
                     (try
                       (write pkg)
                       (catch Exception e

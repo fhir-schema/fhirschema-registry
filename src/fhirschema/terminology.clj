@@ -1,6 +1,6 @@
 (ns fhirschema.terminology
   (:require [pg :as pg]
-            [gcp]
+            [gcs]
             [cheshire.core]
             [clj-yaml.core]
             [clojure.string :as str]
@@ -91,11 +91,11 @@
 
 (comment
 
-  (def storage (gcp/mk-storage))
+  (def storage (gcs/mk-storage))
 
-  (def blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
+  (def blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/codesystem.ndjson.gz"))
 
-  (def codesystems (gcp/read-ndjson-blob blb))
+  (def codesystems (gcs/read-ndjson-blob blb))
 
   (count codesystems)
   (mapv :url codesystems)
@@ -157,8 +157,8 @@
   (dump (take 10 codesystems))
 
 
-  (def vs-blb (gcp/get-blob storage gcp/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/valueset.ndjson.gz"))
-  (def valuesets (gcp/read-ndjson-blob vs-blb))
+  (def vs-blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/valueset.ndjson.gz"))
+  (def valuesets (gcs/read-ndjson-blob vs-blb))
 
   (dump
    (->> valuesets

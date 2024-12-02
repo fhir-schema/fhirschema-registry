@@ -1,4 +1,4 @@
-(ns gcp
+(ns gcs
   (:require [clojure.string :as str]
             [utils.ndjson :as ndjson]
             [system]
@@ -15,7 +15,6 @@
            [java.nio.channels Channels]
            [java.io BufferedReader InputStream InputStreamReader BufferedWriter OutputStreamWriter]))
 
-
 (defn gz-stream [^InputStream str]
   (GZIPInputStream. str))
 
@@ -23,7 +22,6 @@
   (.getService (StorageOptions/getDefaultInstance)))
 
 (def DEFAULT_BUCKET "fs.get-ig.org")
-
 
 (defn get-service [context]
   (system/get-system-state context [:svc]))
@@ -125,20 +123,12 @@
 ;;                          (io/writer))]
 ;;     (cb writer)))
 
-
 (comment
 
-  (def system (system/new-system {}))
-
-  (start system {})
-
-  (def context (system/new-context system))
-  context
+  (def context (system/start-system {:services ["gcs"]}))
 
   (get-service context)
-
   (get-bucket context)
-
   (get-bucket-name context)
 
   (count (objects context))

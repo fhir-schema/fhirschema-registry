@@ -5,7 +5,7 @@
    [clojure.string :as str]
    [clojure.java.shell :refer [sh]]
    [pjson.core :as pjson]
-   [gcp]
+   [gcs]
    [utils.ndjson])
   (:import
    [java.nio.file Path Paths Files]
@@ -56,13 +56,13 @@
         prefix (str "p/" (:name pkg) "/" (:version pkg) "/")
         stats (atom {})
         errors (atom [])
-        url-wr (gcp/blob-ndjson-writer storage bucket (str prefix "urls.ndjson.gz"))
+        url-wr (gcs/blob-ndjson-writer storage bucket (str prefix "urls.ndjson.gz"))
         writers (atom {"url" url-wr})
         get-writer (fn [rt]
                      (let [rt (str/lower-case rt)]
                        (if-let [wr (get @writers rt)]
                          wr
-                         (let [wr (gcp/blob-ndjson-writer storage bucket (str prefix rt ".ndjson.gz"))]
+                         (let [wr (gcs/blob-ndjson-writer storage bucket (str prefix rt ".ndjson.gz"))]
                            ;; (println :open rt)
                            (swap! writers assoc rt wr)
                            wr))))]
@@ -81,21 +81,21 @@
                               (.write url-wr (cheshire.core/generate-string {:url (:url res)}))
                               (.write url-wr "\n"))
                             (if (= nm "package.json")
-                              (gcp/text-blob storage bucket (str prefix "package.json") (cheshire.core/generate-string (merge pkg res)))
+                              (gcs/text-blob storage bucket (str prefix "package.json") (cheshire.core/generate-string (merge pkg res)))
                               (let [rtwrt (get-writer (:resourceType res))]
                                 (.write rtwrt res-json)
                                 (.write rtwrt "\n"))))))
                       (catch Exception e
                         (swap! errors conj (str nm "-" (.getMessage e)))
                         (println :error (:name pkg) (:version pkg) nm  (subs (.getMessage e) 0 50)))))))
-      (gcp/text-blob storage bucket (str prefix "stats.json") (cheshire.core/generate-string @stats))
+      (gcs/text-blob storage bucket (str prefix "stats.json") (cheshire.core/generate-string @stats))
       (when (seq @errors)
-        (gcp/text-blob storage bucket (str prefix "errors.txt")  (str/join @errors "\n")))
+        (gcs/text-blob storage bucket (str prefix "errors.txt")  (str/join @errors "\n")))
       (doseq [[rt wr] @writers]
         ;; (println :close rt)
         (.close wr))
       (catch Exception e
-        (gcp/text-blob storage bucket (str prefix "errors.txt") (str (.getMessage e) "\n" (str/join @errors "\n")))
+        (gcs/text-blob storage bucket (str prefix "errors.txt") (str (.getMessage e) "\n" (str/join @errors "\n")))
         (doseq [[rt wr] @writers]
           ;; (println :close rt)
           (.close wr))
@@ -113,7 +113,7 @@
   (count packages)
 
 
-  (def storage (gcp/mk-storage))
+  (def storage (gcs/mk-storage))
 
   (->> (for [pkg-name packages] (when-let [pkg (pkg-info pkg-name)] pkg))
        (filter identity)
