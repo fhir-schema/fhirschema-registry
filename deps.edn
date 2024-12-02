@@ -16,7 +16,7 @@
         context/pg          {:local/root "./libs/pg"}
         context/http        {:local/root "./libs/http"}
         context/gcs         {:local/root "./libs/gcs"}
-        fhir/fhirschema     {:local/root "./libs/fhirschema"}
+        fhir/fhir           {:local/root "./libs/fhir"}
         }
 
  :aliases

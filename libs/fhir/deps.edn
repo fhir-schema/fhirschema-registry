@@ -1,6 +1,8 @@
 {:paths ["src"]
  :jvm-opts ["-Djdk.attach.allowAttachSelf"]
- :deps {org.clojure/clojure    {:mvn/version "1.12.0"}}
+ :deps {org.clojure/clojure     {:mvn/version "1.12.0"}
+        clj-commons/clj-yaml    {:mvn/version "0.7.106"}
+        healthsamurai/matcho    {:mvn/version "0.3.8"}}
 
  :aliases
  {:dev

@@ -26,13 +26,30 @@
         (when-let [^TarArchiveEntry entry (.getNextTarEntry tar-archive-input-stream)]
           (let [^String nm (str/replace (.getName entry) #"package/" "")
                 read-fn (fn [& [json]]
-                       (let [content (byte-array (.getSize entry))]
-                         (.read tar-archive-input-stream content)
-                         (if json
-                           (cheshire.core/parse-string (String. content) keyword)
-                           (String. content))))]
+                          (let [content (byte-array (.getSize entry))]
+                            (.read tar-archive-input-stream content)
+                            (if json
+                              (cheshire.core/parse-string (String. content) keyword)
+                              (String. content))))]
             (cb nm read-fn))
           (recur))))))
+
+(defn reduce-tar [^String url cb]
+  (let [^URL input-stream-url (URL. url)]
+    (with-open [^InputStream input-stream (.openStream input-stream-url)
+                ^GzipCompressorInputStream gzip-compressor-input-stream (GzipCompressorInputStream. input-stream)
+                ^TarArchiveInputStream tar-archive-input-stream (TarArchiveInputStream. gzip-compressor-input-stream)]
+      (loop [acc {}]
+        (if-let [^TarArchiveEntry entry (.getNextTarEntry tar-archive-input-stream)]
+          (let [^String nm (str/replace (.getName entry) #"package/" "")
+                read-fn (fn [& [json]]
+                          (let [content (byte-array (.getSize entry))]
+                            (.read tar-archive-input-stream content)
+                            (if json
+                              (cheshire.core/parse-string (String. content) keyword)
+                              (String. content))))]
+            (recur (cb acc nm read-fn)))
+          acc)))))
 
 (system/defmanifest
   {:description "work with fhir packages"
@@ -57,16 +74,26 @@
       (catch Exception e
         (throw (Exception. out))))))
 
+(defn pkg-deps
+  [context pkg]
+  (let [cmd (str "npm --registry " (get-registry context) " view dependencies --json " pkg)
+        out (-> (bash cmd) :out)]
+    (system/info context ::pkg-info cmd)
+    (try
+      (from-json out)
+      (catch Exception e
+        (throw (Exception. out))))))
+
 (defn read-package
-  "read package
-  * pkg is what's returned by pkg-info
-  returns package bundle which may be queries with
-  "
   [context pkg on-file]
   (system/info context ::read-package (:url pkg))
   (read-tar (:url pkg) (fn [nm read-resource] (on-file nm read-resource))))
 
-(defn reduce-package [context pkg acc on-file])
+(defn reduce-package
+  [context pkg on-file]
+  (system/info context ::read-package (:url pkg))
+  (reduce-tar (:url pkg) (fn [acc nm read-resource] (on-file acc nm read-resource))))
+
 
 (system/defstart [context config] config)
 

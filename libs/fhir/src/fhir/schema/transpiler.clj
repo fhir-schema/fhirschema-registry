@@ -1,4 +1,4 @@
-(ns fhirschema.transpiler
+(ns fhir.schema.transpiler
   (:require [clojure.string :as str]
             [clj-yaml.core]))
 

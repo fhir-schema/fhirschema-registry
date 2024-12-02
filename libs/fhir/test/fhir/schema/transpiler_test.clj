@@ -1,6 +1,6 @@
-(ns fhirschema.transpiler-test
+(ns fhir.schema.transpiler-test
   (:require [clojure.test :refer [deftest testing]]
-            [fhirschema.transpiler :refer [parse-path get-common-path calculate-actions translate]]
+            [fhir.schema.transpiler :refer [parse-path get-common-path calculate-actions translate]]
             [matcho.core :as matcho]))
 
 

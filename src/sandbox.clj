@@ -3,30 +3,79 @@
             [gcs]
             [http]
             [fhir-pkg]
-            [pg :as pg]
+            [pg]
+            [pg.repo]
             [cheshire.core]
             [clj-yaml.core]
             [clojure.string :as str]
             [utils.ndjson :as ndjson]
             [fhirschema.terminology]
-            [fhirschema.transpiler :refer [translate]]))
+            [fhir.schema.transpiler :refer [translate]]))
 
 (defn dump [x]
   (spit "/tmp/dump.yaml" (clj-yaml.core/generate-string x)))
 
 (comment
 
-  (def context (system/start-system {:services ["pg" "gcs" "fhir-pkg"]
+  (def context (system/start-system {:services ["pg" "pg.repo" "gcs" "fhir-pkg"]
                                      :http {:port 7777}
                                      :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+
+  (system/stop-system context)
 
   (def pkgi (fhir-pkg/pkg-info context "hl7.fhir.us.core"))
 
   pkgi
 
-  (fhir-pkg/read-package context pkgi (fn [nm read-file] (println nm)))
+  (defn loadable? [nm]
+    (and (str/ends-with? nm ".json")
+         (or (contains? #{"package.json" ".index.json"} nm)
+             (str/starts-with? nm "StructureDefinition")
+             (str/starts-with? nm "ValueSet")
+             (str/starts-with? nm "CodeSystem")
+             (str/starts-with? nm "SearchParameter"))))
 
-  (system/stop-system context)
+
+  (def pkg
+    (fhir-pkg/reduce-package
+     context pkgi
+     (fn [acc nm read-file]
+       (if (loadable? nm)
+         (let [res (read-file true)]
+           (assoc-in acc [(or (:resourceType res) nm) (or (:url res) nm)]
+                     (assoc-in (dissoc res :text :snapshot) [:meta :file] nm)))
+         acc))))
+
+  (pg/execute! context {:sql ["drop table if exists sd"]})
+
+  (pg.repo/register-repo
+   context {:table "sd"
+            :primary-key [:url]
+            :columns {:url {:type "text"}
+                      :resource {:type "jsonb"}}})
+
+  (pg.repo/truncate context {:table "sd"})
+
+  (count (vals (get pkg "StructureDefinition")))
+
+  (pg.repo/load
+   context {:table "sd"}
+   (fn [insert]
+     (doseq [sd (vals (get pkg "StructureDefinition"))]
+       (insert sd))))
+
+  (pg.repo/select context {:table "sd" :limit 10})
+
+  (pg/execute! context {:sql "select count(*) from sd"})
+  (pg/execute! context {:sql "select url, resource->'type' as tp from sd limit 10"})
+
+  (keys pkg)
+  (get pkg "package.json")
+
+  (keys (get pkg "StructureDefinition"))
+
+  (get (get pkg nil) nil)
+
 
   (pg/execute! context ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
 
