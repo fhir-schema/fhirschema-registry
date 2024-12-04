@@ -15,6 +15,189 @@
 (defn dump [x]
   (spit "/tmp/dump.yaml" (clj-yaml.core/generate-string x)))
 
+(def canonicals
+  ["activitydefinition"
+   "actordefinition"
+   "capabilitystatement"
+   "chargeitemdefinition"
+   "citation"
+   "codesystem"
+   "compartmentdefinition"
+   "conceptmap"
+   "conditiondefinition"
+   "eventdefinition"
+   "evidence"
+   "evidencereport"
+   "evidencevariable"
+   "examplescenario"
+   "graphdefinition"
+   "implementationguide"
+   "library"
+   "measure"
+   "messagedefinition"
+   "namingsystem"
+   "observationdefinition"
+   "operationdefinition"
+   "plandefinition"
+   "questionnaire"
+   "requirements"
+   "searchparameter"
+   "specimendefinition"
+   "structuredefinition"
+   "structuremap"
+   "subscriptiontopic"
+   "terminologycapabilities"
+   "testplan"
+   "testscript"
+   "valueset"])
+
+(def canonical-columns
+  {:package_name {:type "text" :required true}
+   :package_version {:type "text" :required true}
+   :url {:type "text" :required true}
+   :version {:type "text" :required true}
+   :resource {:type "jsonb"}})
+
+(defn migrate [context]
+
+  (pg.repo/register-repo
+   context {:table "package"
+            :primary-key [:name]
+            :columns {:name {:type "text" :required true}
+                      :resource {:type "jsonb"}}})
+
+  (pg.repo/register-repo
+   context {:table "package_version"
+            :primary-key [:name :version :resource]
+            :columns {:name {:type "text" :required true}
+                      :version {:type "text" :required true}
+                      :resource {:type "jsonb"}}})
+
+  (pg.repo/register-repo
+   context {:table "package_dependency"
+            :primary-key [:name :version :dep_name :dep_version]
+            :columns {:name {:type "text" :required true}
+                      :version {:type "text" :required true}
+                      :dep_name {:type "text"}
+                      :dep_version {:type "text"}
+                      :resource {:type "jsonb"}}})
+
+  (pg.repo/register-repo
+   context {:table "structuredefinition_element"
+            :primary-key [:package_name :package_version :definition :version :id]
+            :columns {:package_name    {:type "text" :required true}
+                      :package_version {:type "text" :required true}
+                      :definition      {:type "text" :required true}
+                      :version         {:type "text" :required true}
+                      :id              {:type "text" :required true}
+                      :path            {:type "text"}
+                      :resource {:type "jsonb"}}})
+
+  (doseq [tbl canonicals]
+    (pg.repo/register-repo
+     context {:table tbl
+              :primary-key [:url :version :package_name :package_version]
+              :columns canonical-columns})))
+
+
+(defn loadable? [nm]
+  (let [lnm (str/lower-case nm)]
+    (and (str/ends-with? nm ".json")
+         (or (contains? #{"package.json" ".index.json"} nm)
+             (some (fn [x] (str/starts-with? lnm x)) canonicals)))))
+
+(defn prepare-resource [nm pkgi res]
+  (-> (assoc-in (dissoc res :text :snapshot :expansion) [:meta :file] nm)
+      (assoc :package_name (:name pkgi)
+             :package_version (:version pkgi)
+             :version (or (:version res) (:version pkgi)))))
+
+(defn read-package
+  "load package into hash-map with :package :index and <rt>"
+  [context package-info]
+  (let [pkgi package-info]
+    (->
+     (fhir-pkg/reduce-package
+      context pkgi
+      (fn [acc nm read-file]
+        (if (loadable? nm)
+          (let [res (read-file true)]
+            (cond
+              (= nm "package.json")
+              (assoc acc
+                     :package_version res
+                     :package_dependency (:dependencies res))
+              (= nm ".index.json")
+              (assoc acc :index res)
+              (and (:resourceType res) (:url res))
+              (let [res (prepare-resource nm pkgi res)
+                    path (->> [(str/lower-case (or (:resourceType res) nm)) (:url res)] (filter identity))]
+                (assoc-in acc path res))
+              :else
+              (do #_(println :skip nm) acc)))
+          (do
+            #_(println :skip nm)
+            acc))))
+     (assoc :package pkgi))))
+
+(defn- load-canonicals [context pkg]
+  (doseq [cn canonicals]
+    (when-let [rs (vals (get pkg cn))]
+      (system/info context ::load (str cn " - " (count rs)))
+      (pg.repo/load
+       context {:table cn}
+       (fn [insert]
+         (doseq [r rs]
+           (insert r)))))))
+
+(declare load-package)
+
+(defn- load-deps [context pkg pkgi opts]
+  (->> (:package_dependency pkg)
+       (mapv (fn [[k v]]
+               (load-package context (name k) v (update opts [:path] (fn [x] (conj (or x []) (:name pkgi))))))))
+  (doseq [[dep-name dep-version] (:package_dependency pkg)]
+    (pg.repo/insert context {:table "package_dependency"
+                             :resource {:name (:name pkgi)
+                                        :version (:version pkgi)
+                                        :dep_name (name dep-name)
+                                        :dep_version dep-version}})))
+
+(defn load-elements [context pkg-bundle]
+  (pg.repo/load
+   context {:table "structuredefinition_element"}
+   (fn [insert]
+     (doseq [[url sd] (get pkg-bundle "structuredefinition")]
+       (doseq [el (get-in sd [:differential :element])]
+         (insert
+          (assoc el
+                 :definition   url
+                 :version      (or (:version sd) (:package_version sd))
+                 :package_name (:package_name sd)
+                 :package_version (:package_version sd))))))))
+
+(defn load-package
+  "load package recursively"
+  [context package-name package-version & [opts]]
+  (when-not (pg.repo/read context {:table "package_version" :match {:name package-name :version package-version}})
+    (system/info context ::load-package (str package-name "@" package-version))
+    (let [pkgi (fhir-pkg/pkg-info context (str package-name "@" package-version))
+          pkg-bundle (read-package context pkgi)]
+      (pg.repo/upsert context {:table "package" :resource pkgi})
+      (pg.repo/insert context {:table "package_version" :resource (:package pkg-bundle)})
+      (load-deps context pkg-bundle pkgi opts)
+      (load-canonicals context pkg-bundle)
+      (load-elements context pkg-bundle))))
+
+(defn truncate [context]
+  (doseq [cn canonicals]
+    (pg.repo/truncate context {:table cn}))
+  (pg.repo/truncate context {:table "package"})
+  (pg.repo/truncate context {:table "package_version"})
+  (pg.repo/truncate context {:table "package_dependency"})
+  (pg.repo/truncate context {:table "structuredefinition_element"}))
+
+
 (comment
 
   (def context (system/start-system {:services ["pg" "pg.repo" "gcs" "fhir-pkg"]
@@ -23,61 +206,44 @@
 
   (system/stop-system context)
 
+
+  (pg/execute! context {:sql ["drop table if exists package;"]})
+  (pg/execute! context {:sql ["drop table if exists package_version;"]})
+
+  (migrate context)
+  (truncate context)
+
   (def pkgi (fhir-pkg/pkg-info context "hl7.fhir.us.core"))
-
-  pkgi
-
-  (defn loadable? [nm]
-    (and (str/ends-with? nm ".json")
-         (or (contains? #{"package.json" ".index.json"} nm)
-             (str/starts-with? nm "StructureDefinition")
-             (str/starts-with? nm "ValueSet")
-             (str/starts-with? nm "CodeSystem")
-             (str/starts-with? nm "SearchParameter"))))
+  (def pkg-bundle (read-package context pkgi))
 
 
-  (def pkg
-    (fhir-pkg/reduce-package
-     context pkgi
-     (fn [acc nm read-file]
-       (if (loadable? nm)
-         (let [res (read-file true)]
-           (assoc-in acc [(or (:resourceType res) nm) (or (:url res) nm)]
-                     (assoc-in (dissoc res :text :snapshot) [:meta :file] nm)))
-         acc))))
-
-  (pg/execute! context {:sql ["drop table if exists sd"]})
-
-  (pg.repo/register-repo
-   context {:table "sd"
-            :primary-key [:url]
-            :columns {:url {:type "text"}
-                      :resource {:type "jsonb"}}})
-
-  (pg.repo/truncate context {:table "sd"})
+  (time (load-package context (:name pkgi) (:version pkgi)))
 
   (count (vals (get pkg "StructureDefinition")))
 
-  (pg.repo/load
-   context {:table "sd"}
-   (fn [insert]
-     (doseq [sd (vals (get pkg "StructureDefinition"))]
-       (insert sd))))
 
-  (pg.repo/select context {:table "sd" :limit 10})
+  (get-in pkg-bundle ["structuredefinition"   "http://hl7.org/fhir/us/core/StructureDefinition/us-core-bmi" :differential])
 
-  (pg/execute! context {:sql "select count(*) from sd"})
-  (pg/execute! context {:sql "select url, resource->'type' as tp from sd limit 10"})
+  (pg.repo/select context {:table "structuredefinition" :limit 10})
+  (pg.repo/select context {:table "structuredefinition_element" :limit 10})
 
-  (keys pkg)
-  (get pkg "package.json")
+  (pg.repo/select context {:table "valueset" :limit 10})
+  (pg.repo/select context {:table "codesystem" :limit 10})
 
-  (keys (get pkg "StructureDefinition"))
+  (pg.repo/select context {:table "package" :limit 10})
 
-  (get (get pkg nil) nil)
+  (pg/execute! context {:sql "select name, version from package_version"})
+  (pg/execute! context {:sql "select * from package_dependency"})
 
+  (pg/execute! context {:sql "select * from structuredefinition_element where resource->'binding' is not null limit 10"})
 
-  (pg/execute! context ["SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';"])
+  (pg.repo/read context {:table "package" :match {:name "hl7.fhir.us.core" :version "6.1.0"}})
+
+  (pg/execute! context {:sql "select count(*) from structuredefinition"})
+  (pg/execute! context {:sql "select count(*) from codesystem"})
+  (pg/execute! context {:sql "select count(*) from valueset"})
+
+  (pg/execute! context {:sql "select url, version, package_name, package_version from structuredefinition limit 10"})
 
   (pg/execute!
    ctx ["
@@ -146,7 +312,7 @@ limit 10"])
   (def blb (gcs/get-blob storage gcs/get-ig-bucket "p/hl7.fhir.r4.core/4.0.1/structuredefinition.ndjson.gz"))
   (def sds (gcs/read-ndjson-blob blb))
 
-  (def bindings 
+  (def bindings
     (->> sds
          (mapcat
           (fn [sd]
