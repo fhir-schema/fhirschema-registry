@@ -86,7 +86,7 @@
                        v (update acc  :exclude-valueset into v)))
                    acc))
         tvs  (merge (select-keys vs [:url :name :version]) acc)]
-    (cond-> tvs 
+    (cond-> tvs
       (and truncate (:include-concept tvs)) (update :include-concept (fn [xs] (take 10 xs))))))
 
 (comment

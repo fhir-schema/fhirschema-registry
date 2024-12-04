@@ -106,7 +106,7 @@
 
 (defn read-package
   "load package into hash-map with :package :index and <rt>"
-  [context package-info]
+  [package-info]
   (let [pkgi package-info]
     (->
      (fhir.package/reduce-package
@@ -119,6 +119,7 @@
               (assoc acc
                      :package_version res
                      :package_dependency (:dependencies res))
+
               (= nm ".index.json")
               (assoc acc :index res)
               (and (:resourceType res) (:url res))
@@ -142,7 +143,7 @@
          (doseq [r rs]
            (insert r)))))))
 
-(declare load-package)
+(declare load-package*)
 
 (defn add-new-package [context pkg]
   (update context ::new-packages (fn [x] (conj (or x []) pkg))))
@@ -157,7 +158,7 @@
   (->> (:package_dependency pkg)
        (reduce (fn [context [k v]]
                  (pg.repo/insert context {:table "package_dependency" :resource {:name (:name pkgi) :version (:version pkgi) :dep_name (name k) :dep_version v}})
-                 (load-package context (name k) v (update opts [:path] (fn [x] (conj (or x []) (:name pkgi))))))
+                 (load-package* context (name k) v (update opts [:path] (fn [x] (conj (or x []) (:name pkgi))))))
                context)))
 
 (defn load-elements [context pkg-bundle]
@@ -173,7 +174,35 @@
                  :package_name (:package_name sd)
                  :package_version (:package_version sd))))))))
 
-(defn load-package
+(defn resolve-all-deps [context pkv & [deps]]
+  (let [deps (or deps {})]
+    (->> (:dependencies pkv)
+         (reduce (fn [deps [k v]]
+                   (if (contains? deps (name k))
+                     deps
+                     (let [dp (pg.repo/read context {:table "package_version" :match {:name (name k) :version v}})]
+                       (resolve-all-deps context dp (update deps (name k) (fn [x]
+                                                                            (if (and x (not (= x v)))
+                                                                              (assert false "version conflict")
+                                                                              v)))))))
+                 deps))))
+
+(defn deps-tree [context pkv]
+  (->> (:dependencies pkv)
+       (reduce (fn [deps [k v]]
+                 (assoc deps k {:version v
+                                :deps (let [dp (pg.repo/read context {:table "package_version" :match {:name (name k) :version v}})]
+                                        (deps-tree context dp))}))
+               {})))
+
+(defn print-deps-tree [deps-tree & [ident]]
+  (let [ident (or ident 0)]
+    (doseq [[k v] deps-tree]
+      (println (str/join " " (mapv (constantly " ") (range ident))) (name k) (:version v))
+      (when (seq (:deps v))
+        (print-deps-tree (:deps v) (inc (inc ident)))))))
+
+(defn load-package*
   "load package recursively"
   [context package-name package-version & [opts]]
   (if (pg.repo/read context {:table "package_version" :match {:name package-name :version package-version}})
@@ -181,13 +210,20 @@
     (do
       (system/info context ::load-package (str package-name "@" package-version))
       (let [pkgi (fhir.package/pkg-info (str package-name "@" package-version))
-            pkg-bundle (read-package context pkgi)
-            context' (load-deps context pkg-bundle pkgi opts)]
+            pkg-bundle (read-package pkgi)
+            context' (load-deps context pkg-bundle pkgi opts)
+            package_version (:package_version pkg-bundle)
+            all-deps (resolve-all-deps context package_version)]
         (pg.repo/upsert context {:table "package" :resource pkgi})
-        (pg.repo/insert context {:table "package_version" :resource (:package pkg-bundle)})
+        (pg.repo/insert context {:table "package_version" :resource (assoc package_version :all_dependencies all-deps)})
         (load-canonicals context pkg-bundle)
         (load-elements context pkg-bundle)
         (add-new-package context' {:package_name package-name, :package_version package-version})))))
+
+(defn load-package
+  "load package recursively"
+  [context package-name package-version]
+  (get-new-packages (load-package* context package-name package-version {})))
 
 (defn truncate [context]
   (doseq [cn canonicals]
@@ -198,33 +234,16 @@
   (pg.repo/truncate context {:table "structuredefinition_element"}))
 
 
-(comment
+(system/defmanifest
+  {:description "create tables and save packages into this tables"
+   :deps ["pg.repo"]})
 
-  (def context (system/start-system {:services ["pg" "pg.repo" "gcs" "fhir-pkg"]
-                                     :http {:port 7777}
-                                     :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+(defn pkg-info [context package-name]
+  (fhir.package/pkg-info package-name))
 
-  (def pkgi (fhir.package/pkg-info "hl7.fhir.us.core"))
+(system/defstart
+  [context config]
+  (migrate context))
 
-  pkgi
-
-  (def result-context (load-package context (:name pkgi) (:version pkgi)))
-
-  (get-new-packages result-context)
-
-  ;; todo run terminology on new packages
-  ;; todo run fhirschema on new packages
-
-  (migrate context)
-
-  (truncate context)
-
-  (system/stop-system context)
-
-
-  (pg.repo/select context {:table "structuredefinition" :limit 10})
-  (pg.repo/select context {:table "structuredefinition_element" :limit 10})
-
-
-
-  )
+(system/defstop
+  [context state])
