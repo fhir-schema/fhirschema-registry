@@ -163,7 +163,7 @@ ORDER BY dep_name
 
 (comment
 
-  (def context (system/start-system {:services ["http" "pg" "gcs" "far"]
+  (def context (system/start-system {:services ["http" "http.openapi" "pg" "gcs" "far"]
                                      :http {:port 7777}
                                      :pg (json/parse-string (slurp "gcp-connection.json") keyword)}))
 
