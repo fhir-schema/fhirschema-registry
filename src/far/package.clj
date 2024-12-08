@@ -5,6 +5,7 @@
             [pg.repo]
             [cheshire.core]
             [utils.uuid]
+            [far.package.canonical-deps :refer [extract-deps]]
             [clojure.string :as str]))
 
 
@@ -44,17 +45,17 @@
    "testscript"
    "valueset"])
 
-(def other-tables ["package" "package_version" "package_dependency" "structuredefinition_element" "canonical"])
+(def other-tables ["package" "package_version" "package_dependency" "structuredefinition_element" "canonical" "canonical_deps"])
 
 (def all-tables (concat canonicals other-tables))
 
 (def canonical-columns
   {:id {:type "uuid" :required true}
-   :package_id {:type "uuid" :required true}
+   :package_id {:type "uuid" :required true :index true}
    :package_name {:type "text" :required true}
    :package_version {:type "text" :required true}
-   :url {:type "text" :required true}
-   :version {:type "text" :required true}
+   :url {:type "text" :required true :index true}
+   :version {:type "text" :required true :index true}
    :resource {:type "jsonb"}})
 
 (defn migrate [context]
@@ -77,7 +78,7 @@
    context {:table "package_dependency"
             :primary-key [:package_id :dep_id]
             :columns {:package_id  {:type "uuid" :required true}
-                      :dep_id      {:type "uuid"}
+                      :dep_id      {:type "uuid" :index true}
                       :name        {:type "text" :required true}
                       :version     {:type "text" :required true}
                       :dep_name    {:type "text"}
@@ -90,7 +91,7 @@
             :columns {:package_id      {:type "uuid" :required true}
                       :package_name    {:type "text" :required true}
                       :package_version {:type "text" :required true}
-                      :defnition_id    {:type "uuid" :required true}
+                      :defnition_id    {:type "uuid" :required true :index true}
                       :definition      {:type "text" :required true}
                       :version         {:type "text" :required true}
                       :id              {:type "text" :required true}
@@ -101,14 +102,29 @@
    context {:table "canonical"
             :primary-key [:id :resource_type]
             :columns {:id               {:type "uuid" :required true}
-                      :package_id       {:type "uuid" :required true}
+                      :package_id       {:type "uuid" :required true :index true}
                       :package_name     {:type "text" :required true}
                       :package_version  {:type "text" :required true}
                       :resource_type    {:type "text" :required true}
-                      :url              {:type "text" :required true}
-                      :version          {:type "text" :required true}
-                      :resource         {:type "jsonb"}
-                      }})
+                      :url              {:type "text" :required true :index true}
+                      :version          {:type "text" :required true :index true}
+                      :resource         {:type "jsonb"}}})
+
+  (pg.repo/register-repo
+   context {:table  "canonical_deps"
+            :primary-key [:defnition_id :type :url]
+            :columns {:package_id {:type "uuid" :index true}
+                      :defnition_id {:type "uuid" :index true}
+                      :definition {:type "text"}
+                      :type {:type "text"}
+                      :package_name {:type "text"}
+                      :package_version {:type "text"}
+                      :definition_version {:type "text"}
+                      :url {:type "text" :index true}
+                      :version {:type "text" :index true}
+                      :status {:type "text"}
+                      :dep_id {:type "uuid"}
+                      :dep_package_id {:type "uuid" :index true}}})
 
   (doseq [tbl canonicals]
     (pg.repo/register-repo
@@ -265,6 +281,60 @@
       (when (seq (:deps v))
         (print-deps-tree (:deps v) (inc (inc ident)))))))
 
+
+(defn get-canonical [context match]
+  (system/get-context-cache
+   context [:canonical match]
+   (fn [] (pg.repo/select context {:table "canonical" :match match}))))
+
+(defn get-deps-idx [context package_id]
+  (let [pid (if (uuid? package_id) package_id (parse-uuid package_id))]
+    (->> (pg.repo/read context {:table "package_version" :match {:id package_id}})
+         (:all_dependencies)
+         (reduce (fn [acc {id :id :as p}]
+                   (assoc acc (parse-uuid id) p))
+                 {pid {:level -1}}))))
+
+(defn get-pkg-deps [context dep]
+  (system/get-context-cache
+   context [:pkgs (:package_id dep)]
+   (fn [] (get-deps-idx context (:package_id dep)))))
+
+(defn resolve-dep [context dep]
+  (let [idx        (get-pkg-deps context dep)
+        rdep  (->> (get-canonical context (if-let [v (:version dep)] {:url  (:url dep) :version v} {:url (:url dep)}))
+                   (mapv (fn [r] (assoc r :level (:level (get idx (:package_id r))))))
+                   (filter :level)
+                   (sort-by :level)
+                   (first))]
+    (if rdep
+      (assoc dep :dep_id (:id rdep) :dep_package_id (:package_id rdep) :status "resolved")
+      (assoc dep :status "error"))))
+
+(defn load-canonical-deps [context pkgi]
+  (let [pid (utils.uuid/uuid (:name pkgi) (:version pkgi))]
+    (system/info context ::valueset-deps)
+    (time
+     (pg.repo/load
+      context {:table "canonical_deps"}
+      (fn [insert]
+        (pg.repo/fetch
+         context {:table "valueset" :match {:package_id pid}}
+         (fn [sd]
+           (doseq [d  (extract-deps sd)]
+             (insert (resolve-dep (system/ctx-set-log-level context :error) d))))))))
+
+    (system/info context ::valueset-deps)
+    (time 
+     (pg.repo/load
+      context {:table "canonical_deps"}
+      (fn [insert]
+        (pg.repo/fetch
+         context {:table "structuredefinition" :match {:package_id pid}}
+         (fn [sd]
+           (doseq [d  (extract-deps sd)]
+             (insert (resolve-dep (system/ctx-set-log-level context :error) d))))))))))
+
 (defn load-package*
   "load package recursively"
   [context package-name package-version & [opts]]
@@ -284,6 +354,7 @@
                                                   :id (utils.uuid/uuid (:name package_version) (:version package_version)))})
         (load-canonicals context pkg-bundle)
         (load-elements context pkg-bundle)
+        (load-canonical-deps context pkgi)
         (add-new-package context' {:package_name package-name, :package_version package-version})))))
 
 (defn load-package
