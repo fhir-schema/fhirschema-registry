@@ -102,8 +102,13 @@
             :primary-key [:id :resource_type]
             :columns {:id               {:type "uuid" :required true}
                       :package_id       {:type "uuid" :required true}
+                      :package_name     {:type "text" :required true}
+                      :package_version  {:type "text" :required true}
                       :resource_type    {:type "text" :required true}
-                      :url              {:type "text" :required true}}})
+                      :url              {:type "text" :required true}
+                      :version          {:type "text" :required true}
+                      :resource         {:type "jsonb"}
+                      }})
 
   (doseq [tbl canonicals]
     (pg.repo/register-repo
@@ -157,6 +162,16 @@
             acc))))
      (assoc :package pkgi))))
 
+(defn canonical-elements [r]
+  (select-keys r [:id :package_id :package_name :package_version
+                  :url :version
+                  ;;sd
+                  :kind :derivation :status :expiremental :fhirVersion :kind :abstract :type :baseDefinition
+                  ;;cs
+                  :title :name :content
+                  ;; vs
+                  :immutable]))
+
 (defn- load-canonicals [context pkg]
   (pg.repo/load
    context {:table "canonical"}
@@ -168,7 +183,9 @@
           context {:table cn}
           (fn [insert]
             (doseq [r rs]
-              (insert-canonical (assoc (select-keys r [:id :package_id :url]) :resource_type (:resourceType r)))
+              (insert-canonical (-> (canonical-elements r)
+                                    (assoc  :resource_type (:resourceType r))
+                                    (update :version (fn [x] (or x (:package_version x))))))
               (insert r)))))))))
 
 (declare load-package*)
@@ -211,18 +228,27 @@
                  :package_name (:package_name sd)
                  :package_version (:package_version sd))))))))
 
-(defn resolve-all-deps [context pkv & [deps]]
-  (let [deps (or deps {})]
+(defn resolve-all-deps* [context pkv & [acc]]
+  (let [acc (or acc {:deps {} :level 0})]
     (->> (:dependencies pkv)
-         (reduce (fn [deps [k v]]
-                   (if (contains? deps (name k))
-                     deps
-                     (let [dp (pg.repo/read context {:table "package_version" :match {:name (name k) :version v}})]
-                       (resolve-all-deps context dp (update deps (name k) (fn [x]
-                                                                            (if (and x (not (= x v)))
-                                                                              (assert false "version conflict")
-                                                                              v)))))))
-                 deps))))
+         (reduce (fn [acc [k v]]
+                   (let [dep-id (utils.uuid/uuid (name k) v)]
+                     (if (contains? (:deps acc) dep-id)
+                       acc
+                       (let [dp (pg.repo/read context {:table "package_version" :match {:id dep-id}})
+                             _ (assert dp (str "Could not resolve dep " k " " v " " dep-id))
+                             prev-level (:level acc)
+                             acc (-> acc
+                                     (assoc-in [:deps dep-id] {:name (name k) :level (:level acc) :version v :id dep-id})
+                                     (update :level inc))]
+                         (-> (resolve-all-deps* context dp acc)
+                             (assoc :level prev-level))))))
+                 acc))))
+
+(defn resolve-all-deps [context pkv]
+  (->> (vals (:deps (resolve-all-deps* context pkv)))
+       (into [])
+       (sort-by :level)))
 
 (defn deps-tree [context pkv]
   (->> (:dependencies pkv)

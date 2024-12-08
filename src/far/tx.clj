@@ -236,7 +236,9 @@
                     (w d)))))))
 
   (pg.repo/select context {:table "valueset_deps" :limit 100})
+
   (pg/execute! context {:sql "select type, count(*) from valueset_deps group by 1 order by 2 desc"})
+  (pg/execute! context {:sql "select valueset_url, count(*) from valueset_deps group by 1 order by 2 desc limit 10"})
 
   (pg.repo/select context {:table "package_version" :limit 10})
 
