@@ -299,5 +299,23 @@
   (pg.repo/select context {:table "terminologycapabilities" :limit 100})
 
   (pg.repo/select context {:table "package_version" :limit 100})
+  (pg.repo/select context {:table "package_version" :limit 100})
+
+
+  (pg.repo/select context {:table "canonical" :limit 100 :match {:resource_type "ValueSet"}})
+
+  
+
+  (pg.repo/select context {:table "canonical_deps" :limit 10})
+
+  (defn get-all-deps [context canonical]
+    (pg/execute! context {:sql [deps-sql (:id canonical)]}))
+
+  (doseq [vs  (pg.repo/select context {:table "valueset" :select [:id :url] :limit 100})]
+    (println vs)
+    (println " * " (str/join "\n * "(get-all-deps (system/ctx-set-log-level  context :error) vs))))
+
+  ;; get all deps for valueset
+
 
   )

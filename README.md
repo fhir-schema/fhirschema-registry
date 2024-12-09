@@ -18,7 +18,7 @@
 First do it for SD, VS
 
 SD deps:
-- baseDefnition
+- baseDefinition
 - type
 - binding
 - reference

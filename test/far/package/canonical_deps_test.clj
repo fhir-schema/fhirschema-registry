@@ -3,7 +3,7 @@
             [clojure.test :as t]
             [matcho.core :as matcho]))
 
-#_(map (fn [x] (dissoc x :short :mapping :defnition :isSummary :requirements :definition :isModifier :meaningWhenMissing :alias
+#_(map (fn [x] (dissoc x :short :mapping :definition :isSummary :requirements :definition :isModifier :meaningWhenMissing :alias
                      :constraint
                      :isModifierReason :isModifier :comment)) els)
 

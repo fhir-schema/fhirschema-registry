@@ -52,7 +52,7 @@
    :definition_version (:version res)
    :package_name (:package_name res)
    :package_version (:package_version res)
-   :defnition_id (:id res)
+   :definition_id (:id res)
    :package_id (:package_id res)})
 
 (defmethod extract-deps "StructureDefinition" [res]

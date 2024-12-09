@@ -6,7 +6,6 @@
             [clojure.test :as t]
             [cheshire.core]
             [clojure.string :as str]
-            [far.package.canonical-deps :refer [extract-deps]]
             [matcho.core :as matcho]))
 
 (defonce context-atom (atom nil))
@@ -30,6 +29,25 @@
 
   )
 
+(t/deftest package-helpers
+
+  (def pkgi (far.package/pkg-info context "hl7.fhir.r4.core"))
+
+  (def pkg-bundle (far.package/package-bundle pkgi))
+
+  (def pkgi-r5 (far.package/pkg-info context "hl7.fhir.r5.core"))
+
+  (def pkg-r5-bundle (far.package/package-bundle pkgi-r5))
+
+  (into #{} (mapv :kind (:files (:index pkg-r5-bundle))))
+
+  (:package_version pkg-bundle)
+
+  (:package_dependency pkg-bundle)
+
+
+  )
+
 (t/deftest far-package-test
 
   (ensure-context)
@@ -38,47 +56,60 @@
 
   (far.package/truncate context)
 
-  (def pkgi (far.package/pkg-info context "hl7.fhir.r4.core"))
-
-  (def pkg-bundle (far.package/read-package pkgi))
-
-
-  (def pkgi-r5 (far.package/pkg-info context "hl7.fhir.r5.core"))
-
-  (def pkg-r5-bundle (far.package/read-package pkgi-r5))
-
-  (into #{} (mapv :kind (:files (:index pkg-r5-bundle))))
-
-  (:package_version pkg-bundle)
-
-  (:package_dependency pkg-bundle)
-
   (def pkgi (far.package/pkg-info context "hl7.fhir.us.mcode"))
 
-  (def new-packages (far.package/load-package context (:name pkgi) (:version pkgi)))
+  ;; load-package "hl7.fhir.us.mcode" "4.0.0-ballot" -> return the package
+  ;; package "name" & "version"
 
+  (def test-pkg-name "hl7.fhir.us.mcode")
+  (def test-pkg-version "4.0.0-ballot")
 
-  (pg.repo/select context {:table  "canonical"
-                           :match { :resource_type "StructureDefinition"} 
-                           :limit 10})
-
-  (pg.repo/select context {:table  "canonical"
-                           :match { :resource_type "ValueSet"} 
-                           :limit 10})
-
-  (pg.repo/select context {:table  "canonical"
-                           :match { :resource_type "CodeSystem"} 
-                           :limit 10})
-
-
-  (pg.repo/select context {:table  "canonical"
-                           :match {:package_id #uuid "d58c1dcd-a628-50ac-94de-757eee16627e"} 
-                           :select [:url]
-                           :order-by [:pg/asc :url]
-                           :limit 1000})
-
+  ;; TODO: add check that package exists
+  (def new-packages (far.package/load-package context test-pkg-name test-pkg-version))
 
   (matcho/match new-packages #(not (empty? %)))
+
+  (matcho/match
+   (far.package/packages context {:select [:id :name :version]})
+   [{:name "hl7.fhir.r4.core", :version "4.0.1"}
+    {:name "hl7.fhir.r4.examples", :version "4.0.1"}
+    {:name "hl7.fhir.r5.core", :version "5.0.0"}
+    {:name "hl7.fhir.us.core", :version "5.0.1"}
+    {:name "hl7.fhir.us.mcode", :version "4.0.0-ballot"}
+    {:name "hl7.fhir.uv.bulkdata", :version "2.0.0"}
+    {:name "hl7.fhir.uv.extensions", :version "5.1.0"}
+    {:name "hl7.fhir.uv.genomics-reporting", :version "2.0.0"}
+    {:name "hl7.fhir.uv.sdc", :version "3.0.0"}
+    {:name "hl7.fhir.uv.smart-app-launch", :version "2.0.0"}
+    {:name "hl7.terminology.r4", :version "3.1.0"}
+    {:name "hl7.terminology.r4", :version "5.3.0"}
+    {:name "hl7.terminology.r5", :version "5.5.0"}
+    {:name "us.nlm.vsac", :version "0.7.0"}])
+
+  (matcho/match
+   (far.package/package context "hl7.fhir.us.mcode" "4.0.0-ballot")
+   {:name "hl7.fhir.us.mcode"
+    :version "4.0.0-ballot"
+    :all_dependencies seq})
+
+  (far.package/canonicals context {:match {:resource_type "StructureDefinition"} :limit 10})
+
+  (ensure-context)
+
+  (pg.repo/select context {:table "canonical_deps"  :limit 10})
+
+  (def pts (pg/execute! context {:sql "select id,url,package_name from canonical where url = 'http://hl7.org/fhir/StructureDefinition/Patient' limit 10"}))
+
+
+  pts
+
+  (def pt-deps (time (far.package/canonical-deps context (first pts) 3)))
+
+
+  (far.package/canonicals context {:match {:resource_type "ValueSet"} :limit 10})
+  (far.package/canonicals context {:match {:resource_type "CodeSystem"} :limit 10})
+  (far.package/canonicals context {:match {:package_id #uuid "d58c1dcd-a628-50ac-94de-757eee16627e"}
+                                   :select [:url] :limit 10})
 
   (t/is (seq (pg/execute! context {:sql "
 select name, version,
@@ -89,19 +120,17 @@ from package_version
 
   (def pkv (pg.repo/read context {:table "package_version" :match {:name "hl7.fhir.us.core"}}))
 
-  pkv
+  (pg.repo/read context {:table "package" :match {:name "hl7.fhir.us.core"}})
 
-  (time (far.package/resolve-all-deps context pkv))
+  (far.package/package-deps context pkv)
 
-  (far.package/print-deps-tree
-   (far.package/deps-tree context pkv))
+  (far.package/package-deps-print context pkv)
 
-  (def mcode (pg.repo/read context {:table "package_version" :match {:name "hl7.fhir.us.mcode"}}))
+  (def mcode (far.package/package-by-name context "hl7.fhir.us.mcode"))
 
-  (far.package/resolve-all-deps context mcode)
+  (far.package/package-deps context mcode)
 
-  (far.package/print-deps-tree
-   (far.package/deps-tree context mcode))
+  (far.package/package-deps-print context mcode)
 
   (pg.repo/select context {:table  "structuredefinition" :limit 10})
   (pg/execute! context {:sql "select url, id, package_id from structuredefinition limit 10"})
@@ -136,7 +165,7 @@ limit 10
      :definition "http://hl7.org/fhir/ValueSet/cosmic",
      :url "http://cancer.sanger.ac.uk/cancergenome/projects/cosmic",
      :package_id #uuid "d58c1dcd-a628-50ac-94de-757eee16627e",
-     :defnition_id #uuid "f208c752-f76d-525c-99bb-ceb7f7448d8a"}])
+     :definition_id #uuid "f208c752-f76d-525c-99bb-ceb7f7448d8a"}])
 
 
   )
