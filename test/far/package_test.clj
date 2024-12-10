@@ -101,9 +101,7 @@
   (def pts (pg/execute! context {:sql "select id,url,package_name from canonical where url = 'http://hl7.org/fhir/StructureDefinition/Patient' limit 10"}))
 
 
-  pts
-
-  (def pt-deps (time (far.package/canonical-deps context (first pts) 3)))
+  (far.package/canonical-deps context (first pts))
 
 
   (far.package/canonicals context {:match {:resource_type "ValueSet"} :limit 10})

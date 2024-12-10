@@ -6,166 +6,206 @@
             [cheshire.core]
             [clj-yaml.core]
             [utils.uuid]
+            [far.package]
+            [far.tx.concepts]
             [clojure.string :as str]))
 
-(defn get-value [p]
-  (->> p
-       (reduce (fn [acc [k v]]
-                 (if (str/starts-with? (name k) "value") v acc))
-               {})))
 
-(defn get-props [c]
-  (->> (:property c)
-       (reduce (fn [c p] (assoc c (keyword (:code p)) (get-value p))) {})))
+(defn classify-vs [context vs]
+  (let [deps (far.package/canonical-deps context vs)
+        cs-deps  (->> deps (filter (fn [{cn :canonical}] (= "CodeSystem" (:resource_type cn)))))
+        all-resolved (or (empty? cs-deps) (= #{"resolved"} (->> cs-deps (mapv (fn [{st :status}] st)) (into #{}))))
+        static (and all-resolved
+                    (or (empty? cs-deps) (= #{"complete"} (->> cs-deps (mapv (fn [{cn :canonical}] (:content cn))) (into #{})))))]
+    {:id (:id vs)
+     :url (:url vs)
+     :static static
+     :resolved all-resolved}))
 
-(defn tiny-concepts [acc hm cs & [parent parents]]
-  (->> cs
-       (reduce (fn [acc c]
-                 (let [acc (conj acc (cond-> (merge (get-props c) (select-keys c [:code :display]))
-                                       parent (assoc hm parent :parent parent :parents parents)))]
-                   (if (:concept c)
-                     (tiny-concepts acc hm (:concept c) (:code c) (conj (or parents []) (:code c)))
-                     acc)))
-               acc)))
 
-(defn tiny-codesystem [cs]
-  (let [hm (or (:hierarchyMeaning cs) "is-a")
-        concepts (tiny-concepts [] hm (:concept cs))]
-    (->
-     (select-keys cs [:description :content :url :name :valueSet :version :package_name :package_version])
-     (cond-> (:experimental cs) (assoc :experimental true)
-             (not (= (:status cs) "active")) (assoc :status (:status cs)))
-     (assoc :concept concepts :numberOfConcepts (count concepts)
-            :id (utils.uuid/cannonical-id cs)))))
+(defn expand-include [context {system :system filter :filter concept :concept valuesets :valueSet :as incl}]
+  (cond
+    concept (->> concept (mapv (fn [c] (assoc c :system system))))))
 
-(defn vs-pattern [vs]
-  (cond-> {}
-    (get-in vs [:compose :include])
-    (assoc :include (into #{} (mapv keys (get-in vs [:compose :include]))))
-    (get-in vs [:compose :exclude])
-    (assoc :exclude (into #{} (mapv keys (get-in vs [:compose :exclude]))))))
+(defn resolve-canonical [context canonical url]
+  (let [[url version] (str/split url #"\|" 2)]
+    (when-let [dep (pg.repo/read context {:table "canonical_deps"
+                                          :match (cond->{:definition_id (:id canonical)
+                                                         :url url}
+                                                   version (assoc :version version))})]
 
-(defn resolve-i [xs idx]
-  (->> xs
-       (reduce (fn [acc {s :system c :concept f :filter v :valueSet}]
-                 (cond-> acc
-                   s (assoc :s "*")
-                   (and s (not c) (nil? (get idx s))) (assoc :! "ERROR")
-                   c (assoc :c "*")
-                   f (assoc :f "*")
-                   v (assoc :v "*")))
-               {})))
+      (when-let [dip (:dep_id dep)]
+        (when-let [cn (pg.repo/read context {:table "canonical" :match {:id dip}})]
+          (pg.repo/read context {:table (:resource_type cn) :match {:id dip}}))))))
 
-(defn vs-pattern-with-resolve [vs idx]
-  (cond-> {}
-    (get-in vs [:compose :include])
-    (assoc :i (resolve-i (get-in vs [:compose :include])  idx))
-    (get-in vs [:compose :exclude])
-    (assoc :e (resolve-i (get-in vs [:compose :exclude]) idx))))
+(def concept-select [:pg/list :system :code :display])
 
-(defn tiny-vs [vs & [truncate]]
-  (let [acc  (->> (:include (:compose vs))
-                  (reduce
-                   (fn [acc {s :system vs :valueSet f :filter cs :concept :as item}]
-                     (cond
-                       cs (update acc :include-concept into (->> cs (mapv (fn [c] (assoc (select-keys c [:code :display]) :system s)))))
-                       f  (update acc :deps conj (assoc item :type "include-filter" :url s))
-                       s  (update acc :deps conj (assoc item :type "include-system" :url s))
-                       vs  (->> vs
-                                (reduce (fn [acc v]
-                                          (update acc :deps conj (assoc item :type "include-valueset" :url v)))
-                                        acc)))
-                     )
-                   {:deps []}))
-        acc  (->> (:exclude (:compose vs))
-                  (reduce
-                   (fn [acc {s :system v :valueSet f :filter cs :concept :as item}]
-                     (cond
-                       cs (update acc :exclude-concept into (->> cs (mapv (fn [c] (assoc c :system s)))))
-                       f  (update acc :deps conj (assoc item :type "exclude-filter" :url s))
-                       s  (update acc :deps conj (assoc item :type "exclude-system" :url s))
-                       v  (->> vs
-                               (reduce (fn [acc v]
-                                         (update acc :deps conj (assoc item :type "exclude-valueset" :url v)))
-                                       acc))
-                     ))
-                   acc))
-        tvs  (merge (select-keys vs [:url :name :version :package_name :package_version]) acc)]
-    (cond-> tvs
-      (and truncate (:include-concept tvs)) (update :include-concept (fn [xs] (take 10 xs))))))
+(defn build-filter [flt]
+  (->> flt
+       (mapv (fn [flt]
+               (cond
+                 (= "is-a" (:op flt))            [:pg/include-op [:resource-> :is-a] [:pg/jsonb [(:value flt)]]]
+                 (= "="    (:op flt))            [:= [:resource#>> [:property (keyword (:property flt))]] [:pg/param (:value flt)]]
+                 ;; TODO: fix logic - we have to find the concept and test for intersection
+                 (= "descendent-of" (:op flt))   [:pg/include-op [:resource-> :is-a] [:pg/jsonb [(:value flt)]]]
+                 :else (assert false (pr-str flt)))))
+       (into [:and])))
 
-(defn vs-deps [vs]
-  (let [base {:id (:id vs) :valueset_url (:url vs) :package_id (:package_id vs)}
-        acc  (->> (:include (:compose vs))
-                  (reduce
-                   (fn [acc {s :system vs :valueSet f :filter cs :concept :as item}]
-                     (if cs
-                       acc
-                       (cond
-                         s (conj acc (merge base {:type "codesystem" :url s}))
-                         vs (->> vs (reduce (fn [acc v] (conj acc (merge base {:type "valueset" :url v}))) acc)))))
-                   #{}))
-        acc  (->> (:exclude (:compose vs))
-                  (reduce
-                   (fn [acc {s :system vs :valueSet f :filter cs :concept :as item}]
-                     (if cs
-                       acc
-                       (cond
-                         s (conj acc (merge base {:type "codesystem" :url s}))
-                         vs (->> vs (reduce (fn [acc v] (conj acc (merge base {:type "valueset" :url v}))) acc)))))
-                   acc))]
-    acc))
+(comment
+  (pg/format-dsql (build-filter {:op "is-a", :value "AGNT", :property "concept"}))
+  (pg/format-dsql (build-filter {:op "=", :value "a", :property "canonical"}))
+
+  )
+(defn expand-dsql [context vs]
+  (let [include (get-in vs [:compose :include])]
+    (->> include
+         (reduce
+          (fn [acc {system :system filter :filter concept :concept valuesets :valueSet :as incl}]
+            (cond
+              concept (conj acc {:select concept-select
+                                 :comment system
+                                 :from :concept
+                                 :where {:valueset [:= :canonical_id [:pg/param (:id vs)]]}})
+              filter  (let [cs (resolve-canonical context vs system)]
+                        (conj acc {:select concept-select
+                                   :comment system
+                                   :from :concept
+                                   :where {:system-filter [:and [:= :canonical_id [:pg/param (:id cs)]] (build-filter filter)]}}))
+              system  (let [cs (resolve-canonical context vs system)]
+                        (conj acc {:select concept-select
+                                   :comment system
+                                   :from :concept
+                                   :where {:system [:= :canonical_id [:pg/param (:id cs)]]}}))
+              valuesets (->> valuesets
+                             (reduce (fn [acc vs-url]
+                                       (if-let [ivs (resolve-canonical context vs vs-url)]
+                                         (into acc (expand-dsql context ivs))
+                                         (throw (Exception. (str "Could not resolve " vs-url)))))
+                                     acc))
+              :else (assert false)))
+          []))))
+
+(defn expand-query [context vs]
+  (->> (expand-dsql context vs)
+       (reduce
+        (fn [q {c :comment :as s}]
+          (assoc q (keyword (last (str/split (or c "ups") #"/")))
+                 (-> (dissoc s :comment) (assoc :ql/type :pg/select))))
+        {:ql/type :pg/union-all})))
+
+(defn expand [context vs]
+  (pg/execute! context {:dsql (expand-query context vs)}))
+
+;; algorithm
+;; include
+;;    concepts     (select concept where vs-id = vs-id)
+;;    cs           (select concept where cs-id = cs-id)
+;;    cs + filter  (select concept where cs-id = cs-id and filter)
+;;    valueset     recur
+;;
+;; exclude
+;;    cs, cs+filter, valuest
+;; vs -> one big union
+
+(defn get-vs [context url]
+  (pg.repo/select context {:table "valueset" :match {:url url}}))
+
+(defn get-cs [context url]
+  (pg.repo/select context {:table "codesystem" :match {:url url}}))
 
 
 (defn migrate [context]
-  (pg.repo/register-repo context
-   {:table "tiny_codesystem"
-    :primary-key [:id]
-    :columns {:id              {:type "uuid" :required true}
-              :package_name    {:type "text" :required true}
-              :package_version {:type "text" :required true}
-              :url             {:type "text" :required true}
-              :version         {:type "text" :required true}
-              :content         {:type "text" :required true}
-              :resource        {:type "jsonb"}}})
+  (pg.repo/register-repo
+   context {:table "concept"
+            :primary-key [:id]
+            :columns {:id              {:type "uuid"}
+                      :package_name    {:type "text" :required true}
+                      :package_version {:type "text" :required true}
+                      :package_id      {:type "uuid" :required true :indexed true}
+                      :logical_id      {:type "uuid" :required true :indexed true}
+                      :canonical_id    {:type "uuid" :required true :indexed true}
+                      :canonical_url   {:type "text" :required true :indexed true}
+                      :canonical_version   {:type "text"}
+                      :system          {:type "text" :requried true}
+                      :code            {:type "text" :requried true}
+                      :display         {:type "text"}
+                      :resource        {:type "jsonb"}}}))
 
-  (pg.repo/register-repo context
-                         {:table "tiny_codesystem_concept"
-                          :primary-key [:package_name :package_version :url :version :code]
-                          :columns {:package_name    {:type "text" :required true}
-                                    :package_version {:type "text" :required true}
-                                    :url             {:type "text" :required true}
-                                    :version         {:type "text" :required true}
-                                    :code            {:type "text" :required true}
-                                    :diplay          {:type "text"}
-                                    :resource        {:type "jsonb"}}})
+(defn drop-tables [context]
+  (pg.repo/drop-repo context {:table "concept"}))
 
-  (pg.repo/register-repo context
-                         {:table "tiny_valueset"
-                          :primary-key [:package_name :package_version :url :version]
-                          :columns {:package_name    {:type "text" :required true}
-                                    :package_version {:type "text" :required true}
-                                    :url             {:type "text" :required true}
-                                    :version         {:type "text" :required true}
-                                    :resource        {:type "jsonb"}}})
+(defn truncate [context]
+  (pg.repo/truncate context {:table "concept"}))
 
-  (pg.repo/register-repo context
-                         {:table "tiny_valueset_concept"
-                          :primary-key [:package_name :package_version :url :version :system :code]
-                          :columns {:package_name    {:type "text" :required true}
-                                    :package_version {:type "text" :required true}
-                                    :url             {:type "text" :required true}
-                                    :version         {:type "text" :required true}
-                                    :system          {:type "text" :required true}
-                                    :code            {:type "text" :required true}
-                                    :mode            {:type "text"}
-                                    :resource        {:type "jsonb"}}})
 
-  )
+(defn load-concepts [context]
+  (far.tx.concepts/load-concepts-from-cs context)
+  (far.tx.concepts/load-concepts-from-vs context))
 
 (comment
 
   (def context (system/start-system {:services ["pg" "pg.repo"] :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+  (migrate context)
+
+  (drop-tables context)
+
+  (truncate context)
+
+  (load-concepts context)
+
+  (pg.repo/select context {:table "concept" :limit 100})
+
+  (classify-vs context {:id #uuid "9af72049-0c52-5afd-a983-273c649e2536"})
+  (->> (pg.repo/select context {:table "valueset" :limit 100})
+       (mapv :compose))
+
+  (resolve-canonical
+   context
+   {:id #uuid "85741cc6-1803-5ad0-b234-90e593efea1c"}
+   "http://terminology.hl7.org/CodeSystem/coverageeligibilityresponse-ex-auth-support")
+
+  (->> (pg.repo/select context {:table "valueset" :limit 100})
+       (mapv #(classify-vs context %)))
+
+  (->> (pg.repo/select context {:table "valueset" :limit 100})
+       (mapv (fn [vs]
+               (println (:url vs))
+               (println (mapv :code (expand context vs))))))
+
+  ;; HERE
+
+  ;;TODO write tests for this guys
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-RoleClassAgent")
+  (def vsurl "http://hl7.org/fhir/ValueSet/provider-taxonomy")
+  (def vsurl "http://hl7.org/fhir/ValueSet/all-time-units")
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-AudioMediaType")
+
+  (far.tx.concepts/extract-concept-cs
+   (first (get-cs context "http://terminology.hl7.org/CodeSystem/v3-mediaType"))
+   )
+
+  (pg.repo/select context {:table "concept" :match {:canonical_url  "http://terminology.hl7.org/CodeSystem/v3-mediaType"}})
+
+
+  (->> (get-vs context vsurl)
+       (first)
+       ;;(expand context)
+       ;; (expand-dsql context)
+       ;; (expand-query context)
+       )
+
+  (->> (get-vs context "http://terminology.hl7.org/ValueSet/v3-ConfidentialityClassification")
+       (mapv :compose))
+
+  (:id (first (get-vs context "http://hl7.org/fhir/ValueSet/security-labels")))
+
+  (resolve-canonical
+   context
+   {:id #uuid "9af72049-0c52-5afd-a983-273c649e2536"}
+   "http://terminology.hl7.org/ValueSet/v3-ConfidentialityClassification")
+
+  (pg.repo/select context {:table "canonical"  :match {:resource_type "CodeSystem"} :limit 10})
+  (pg.repo/select context {:table "canonical_deps"  :limit 10})
 
   context
 
@@ -255,14 +295,6 @@
 
 
   (pg.repo/select context {:table "package_version" :limit 10})
-
-  ;; generic function
-  (defn resolve-canonical [package-id resource-type url]
-    ;; get all deps
-    ;; search canonical by resource-type & url in all deps
-    ;; choose toppest if multiple
-    ;; fail if same level
-    )
 
   (pg.repo/select context {:table "package_dependency" :limit 10})
 

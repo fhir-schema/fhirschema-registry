@@ -57,15 +57,27 @@
     (let [deps-idx (assoc deps-idx can-id (merge {:path path} details))]
       (->> (pg.repo/select context {:table "canonical_deps" :match {:definition_id can-id}})
            (reduce (fn [deps-idx {dep-id :dep_id :as dep}]
-                     (if (or (contains? deps-idx dep-id) (nil? dep-id)
-                             ;; skip references
-                             (= ":reference" (:type dep)))
-                       deps-idx
-                       (resolve-canonical-deps context deps-idx dep-id (conj path [(:definition dep) (:type dep)]) dep)))
+                     (cond (or (contains? deps-idx dep-id) (= ":reference" (:type dep))) ;;skip refs
+                           deps-idx
+                           (nil? dep-id)
+                           (assoc deps-idx can-id (merge dep {:path path}))
+                           :else (resolve-canonical-deps context deps-idx dep-id (conj path [(:definition dep) (:type dep)]) dep)))
                    deps-idx)))))
 
-(defn canonical-deps [context canonical & [max-deps]]
-  (resolve-canonical-deps context {} (:id canonical) [] {}))
+(defn reduce-by [key col]
+  (->> col (reduce (fn [acc m] (assoc acc (get m key) m)) {})))
+
+(defn canonical-deps [context {id :id :as canonical} & [max-deps]]
+  (assert (and (map? canonical) id))
+  (let [deps (resolve-canonical-deps context {} id [] {})
+        canonicals-idx (when (seq (dissoc deps id))
+                         (->> (pg.repo/select context {:table "canonical" :match {:id (into [] (keys (dissoc deps id)))}})
+                              (reduce-by :id)))]
+    (->> (dissoc deps id)
+         (mapv (fn [[id dep]]
+                 (if-let [cn (get canonicals-idx id)]
+                   (assoc dep :canonical cn)
+                   dep))))))
 
 (system/defmanifest
   {:description "create tables and save packages into this tables"
