@@ -8,10 +8,28 @@
             [utils.uuid]
             [far.package]
             [far.tx.concepts]
+            [dsql.core :as ql]
+            [dsql.pg :as pgql]
             [clojure.string :as str]))
 
 
-(defn classify-vs [context vs]
+(defmethod ql/to-sql
+  :pg/insert-with-select
+  [acc opts {tbl :into cols :columns sel :select }]
+  (-> acc
+      (conj "INSERT INTO")
+      (pgql/identifier opts tbl)
+      (ql/parens (fn [acc] (ql/to-sql acc opts cols)))
+      (ql/to-sql opts sel)))
+
+
+(defn get-vs [context url]
+  (pg.repo/select context {:table "valueset" :match {:url url}}))
+
+(defn get-cs [context url]
+  (pg.repo/select context {:table "codesystem" :match {:url url}}))
+
+(defn valueset-status [context vs]
   (let [deps (far.package/canonical-deps context vs)
         cs-deps  (->> deps (filter (fn [{cn :canonical}] (= "CodeSystem" (:resource_type cn)))))
         all-resolved (or (empty? cs-deps) (= #{"resolved"} (->> cs-deps (mapv (fn [{st :status}] st)) (into #{}))))
@@ -19,9 +37,19 @@
                     (or (empty? cs-deps) (= #{"complete"} (->> cs-deps (mapv (fn [{cn :canonical}] (:content cn))) (into #{})))))]
     {:id (:id vs)
      :url (:url vs)
-     :static static
-     :resolved all-resolved}))
+     :processing {:status "processed"
+                  :static static
+                  :resolved all-resolved}}))
 
+(defn classify-valuesets [context]
+  (time
+   (let [context (system/ctx-set-log-level context :error)]
+     (->> (pg.repo/select context {:table "valueset" :where [:pg/sql "resource#>>'{processing, status}' <> 'processed'"]})
+          (map-indexed (fn [i vs]
+                         (when (= 0 (mod i 100)) (print ".") (flush))
+                         (let [status (valueset-status context vs)]
+                           (pg.repo/upsert context {:table "valueset" :resource (merge status vs)}))))
+          (count)))))
 
 (defn expand-include [context {system :system filter :filter concept :concept valuesets :valueSet :as incl}]
   (cond
@@ -38,22 +66,39 @@
         (when-let [cn (pg.repo/read context {:table "canonical" :match {:id dip}})]
           (pg.repo/read context {:table (:resource_type cn) :match {:id dip}}))))))
 
-(def concept-select [:pg/list :system :code :display])
+(def concept-select [:pg/list :system :code :display :canonical_id])
 
 (defn build-filter [flt]
   (->> flt
        (mapv (fn [flt]
                (cond
                  (= "is-a" (:op flt))            [:pg/include-op [:resource-> :is-a] [:pg/jsonb [(:value flt)]]]
+                 (= "is-not-a" (:op flt))        [:or [:not [:pg/include-op [:resource-> :is-a] [:pg/jsonb [(:value flt)]]]]
+                                                  [:<> :code (:value flt)]]
                  (= "="    (:op flt))            [:= [:resource#>> [:property (keyword (:property flt))]] [:pg/param (:value flt)]]
+                 (= "exists"  (:op flt))         (if (= "false" (:value flt))
+                                                   [:is [:resource#>> [:property (keyword (:property flt))]] nil]
+                                                   [:is-not [:resource#>> [:property (keyword (:property flt))]] ])
+                 (= "in"   (:op flt))            [:in [:resource#>> [:property (keyword (:property flt))]]
+                                                  [:pg/params-list (mapv str/trim (str/split (:value flt) #","))]]
                  ;; TODO: fix logic - we have to find the concept and test for intersection
                  (= "descendent-of" (:op flt))   [:pg/include-op [:resource-> :is-a] [:pg/jsonb [(:value flt)]]]
-                 :else (assert false (pr-str flt)))))
+                 (= "regex" (:op flt))           ^:pg/op[(keyword "~") [:resource#>> [:property (keyword (:property flt))]]
+                                                         [:pg/param (:value flt)]]
+                 :else (throw (Exception. (pr-str flt))))))
        (into [:and])))
 
 (comment
-  (pg/format-dsql (build-filter {:op "is-a", :value "AGNT", :property "concept"}))
-  (pg/format-dsql (build-filter {:op "=", :value "a", :property "canonical"}))
+  (pg/format-dsql (build-filter [{:op "is-a", :value "AGNT", :property "concept"}]))
+
+  (pg/format-dsql (build-filter [{:op "=", :value "a", :property "canonical"}]))
+  (build-filter [{:op "regex", :value "[A-Z]{3}", :property "code"}])
+
+  (build-filter [{:op "is-not-a", :value "O", :property "concept"}]) 
+
+  (build-filter [{:op "in", :value "1652103,1161382,352297,1720806", :property "concept"}])
+
+  (build-filter [{:op "exists", :value "false", :property "ext-lang"}])
 
   )
 (defn expand-dsql [context vs]
@@ -80,8 +125,7 @@
                              (reduce (fn [acc vs-url]
                                        (if-let [ivs (resolve-canonical context vs vs-url)]
                                          (into acc (expand-dsql context ivs))
-                                         (throw (Exception. (str "Could not resolve " vs-url)))))
-                                     acc))
+                                         (println :ERROR (str "Could not resolve " vs-url)))) acc))
               :else (assert false)))
           []))))
 
@@ -96,6 +140,16 @@
 (defn expand [context vs]
   (pg/execute! context {:dsql (expand-query context vs)}))
 
+
+(defn expand-insert-query [context vs]
+     {:ql/type :pg/insert-with-select
+      :into :valueset_expansion
+      :columns concept-select
+      :select (expand-query context vs)})
+
+(defn expand-in-db [context vs]
+  (pg/execute! context {:dsql (expand-insert-query context vs)}))
+
 ;; algorithm
 ;; include
 ;;    concepts     (select concept where vs-id = vs-id)
@@ -106,12 +160,26 @@
 ;; exclude
 ;;    cs, cs+filter, valuest
 ;; vs -> one big union
+(comment
+  (pg.repo/truncate context {:table "valueset_expansion"})
+  )
 
-(defn get-vs [context url]
-  (pg.repo/select context {:table "valueset" :match {:url url}}))
-
-(defn get-cs [context url]
-  (pg.repo/select context {:table "codesystem" :match {:url url}}))
+(defn expand-valuesets [context]
+  (let [context (system/ctx-set-log-level context :error)
+        progress (atom 0)]
+    (->> (pg.repo/select
+          context {:table "valueset"
+                   :where [:pg/sql "resource#>>'{processing, expand}' is null and resource#>>'{processing, static}' = 'true'"]})
+         (pmap (fn [vs]
+                 (try
+                   (swap! progress inc)
+                   (when (= 0 (mod @progress 1000)) (println "."))
+                   (expand-in-db context vs)
+                   (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', '\"expanded\"') where id = ?" (:id vs)]})
+                   (catch Exception e
+                     (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', '\"error\"') where id = ?" (:id vs)]})
+                     (println :ERROR (str (:url vs)  " " :error (pr-str (.getMessage e))))))))
+         (count))))
 
 
 (defn migrate [context]
@@ -129,7 +197,18 @@
                       :system          {:type "text" :requried true}
                       :code            {:type "text" :requried true}
                       :display         {:type "text"}
-                      :resource        {:type "jsonb"}}}))
+                      :resource        {:type "jsonb"}}})
+
+  ;; (pg.repo/drop-repo context {:table "valueset_expansion"})
+
+  (pg.repo/register-repo
+   context {:table "valueset_expansion"
+            :columns {:canonical_id    {:type "uuid" :required true :indexed true}
+                      :system          {:type "text" :requried true}
+                      :code            {:type "text" :requried true}
+                      :display         {:type "text"}}})
+
+  )
 
 (defn drop-tables [context]
   (pg.repo/drop-repo context {:table "concept"}))
@@ -141,6 +220,19 @@
 (defn load-concepts [context]
   (far.tx.concepts/load-concepts-from-cs context)
   (far.tx.concepts/load-concepts-from-vs context))
+
+(defn status-of-valuesets [context]
+  (pg/execute!
+   context {:sql "
+select
+  resource#>>'{processing, status}' as status,
+  resource#>>'{processing, resolved}' as resolved,
+  resource#>>'{processing, static}' as static,
+  resource#>>'{processing, expand}' as expand,
+count(*)
+from valueset
+group by 1,2,3,4 "})
+  )
 
 (comment
 
@@ -155,30 +247,55 @@
 
   (pg.repo/select context {:table "concept" :limit 100})
 
-  (classify-vs context {:id #uuid "9af72049-0c52-5afd-a983-273c649e2536"})
-  (->> (pg.repo/select context {:table "valueset" :limit 100})
-       (mapv :compose))
+  (valueset-status context {:id #uuid "9af72049-0c52-5afd-a983-273c649e2536"})
 
-  (resolve-canonical
-   context
-   {:id #uuid "85741cc6-1803-5ad0-b234-90e593efea1c"}
-   "http://terminology.hl7.org/CodeSystem/coverageeligibilityresponse-ex-auth-support")
+  (classify-valuesets context)
 
-  (->> (pg.repo/select context {:table "valueset" :limit 100})
-       (mapv #(classify-vs context %)))
+  (status-of-valuesets context)
 
-  (->> (pg.repo/select context {:table "valueset" :limit 100})
-       (mapv (fn [vs]
-               (println (:url vs))
-               (println (mapv :code (expand context vs))))))
+  (pg.repo/truncate context {:table "valueset_expansion"})
+
+  (time (expand-valuesets context))
+
+  (pg/execute! context {:sql "select count(*) from valueset_expansion"})
+
+  (pg.repo/select context {:table "valueset_expansion" :limit 10})
 
   ;; HERE
+
 
   ;;TODO write tests for this guys
   (def vsurl "http://terminology.hl7.org/ValueSet/v3-RoleClassAgent")
   (def vsurl "http://hl7.org/fhir/ValueSet/provider-taxonomy")
   (def vsurl "http://hl7.org/fhir/ValueSet/all-time-units")
   (def vsurl "http://terminology.hl7.org/ValueSet/v3-AudioMediaType")
+
+  (def vsurl "http://hl7.org/fhir/ValueSet/iso3166-1-3")
+  (get-cs context "urn:iso:std:iso:3166")
+
+  (def vsurl "http://hl7.org/fhir/ValueSet/patient-contactrelationship")
+  (get-cs context "http://terminology.hl7.org/CodeSystem/v2-0131")
+
+  (pg.repo/select context {:table "concept" :match {:canonical_url "http://terminology.hl7.org/CodeSystem/v2-0131"}})
+
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-ActSuppliedItemDetectedIssueCode")
+  (def vsurl "http://cts.nlm.nih.gov/fhir/ValueSet/2.16.840.1.113762.1.4.1221.138")
+  (def vsurl "http://cts.nlm.nih.gov/fhir/ValueSet/2.16.840.1.113762.1.4.1222.1059")
+
+
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-ActInvoiceDetailCode")
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-Race")
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-xBillableProduct")
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-UpdateRefusalReasonCode")
+
+  (def vsurl "http://terminology.hl7.org/ValueSet/v3-PostalAddressUse")
+
+  (->> (get-vs context vsurl)
+       (first)
+       ;; (expand-dsql context)
+       (expand context)
+       ;; (expand-query context)
+       )
 
   (far.tx.concepts/extract-concept-cs
    (first (get-cs context "http://terminology.hl7.org/CodeSystem/v3-mediaType"))
@@ -187,12 +304,6 @@
   (pg.repo/select context {:table "concept" :match {:canonical_url  "http://terminology.hl7.org/CodeSystem/v3-mediaType"}})
 
 
-  (->> (get-vs context vsurl)
-       (first)
-       ;;(expand context)
-       ;; (expand-dsql context)
-       ;; (expand-query context)
-       )
 
   (->> (get-vs context "http://terminology.hl7.org/ValueSet/v3-ConfidentialityClassification")
        (mapv :compose))
