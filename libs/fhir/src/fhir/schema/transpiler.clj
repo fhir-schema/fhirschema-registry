@@ -349,16 +349,17 @@
   (let [res (build-resource-header structure-definition)]
     (loop [value-stack [res]
            prev-path EMPTY_PATH
-           els (get-differential structure-definition)]
+           els (get-differential structure-definition)
+           idx 0]
       (if (empty? els)
         (let [actions (calculate-actions prev-path EMPTY_PATH)
-              new-value-stack (apply-actions value-stack actions {})]
+              new-value-stack (apply-actions value-stack actions {:index idx})]
           (assert (= 1 (count new-value-stack)))
           (first new-value-stack))
         (let [e (first els)]
           (if (choice? e)
-            (recur value-stack prev-path (into (union-elements e) (rest els)))
+            (recur value-stack prev-path (into (union-elements e) (rest els)) (inc idx))
             (let [new-path        (enrich-path prev-path (parse-path e))
                   actions         (calculate-actions prev-path new-path)
-                  new-value-stack (apply-actions value-stack actions (build-element e))]
-              (recur new-value-stack new-path (rest els)))))))))
+                  new-value-stack (apply-actions value-stack actions (assoc (build-element e) :index idx))]
+              (recur new-value-stack new-path (rest els) (inc idx)))))))))

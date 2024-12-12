@@ -82,8 +82,12 @@
 
 (t/deftest test-sd
 
+  (def deps (sut/extract-deps pt-sd))
+
+  (t/is (every? :resource_type deps))
+
   (matcho/match
-   (->> (mapv :url (sut/extract-deps pt-sd)) (sort))
+   (->> (mapv :url deps) (sort))
    ["http://hl7.org/fhir/StructureDefinition/Address"
     "http://hl7.org/fhir/StructureDefinition/Attachment"
     "http://hl7.org/fhir/StructureDefinition/BackboneElement"

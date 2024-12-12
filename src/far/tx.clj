@@ -20,7 +20,8 @@
       (conj "INSERT INTO")
       (pgql/identifier opts tbl)
       (ql/parens (fn [acc] (ql/to-sql acc opts cols)))
-      (ql/to-sql opts sel)))
+      (ql/to-sql opts sel)
+      (conj "returning *")))
 
 
 (defn get-vs [context url]
@@ -31,10 +32,16 @@
 
 (defn valueset-status [context vs]
   (let [deps (far.package/canonical-deps context vs)
-        cs-deps  (->> deps (filter (fn [{cn :canonical}] (= "CodeSystem" (:resource_type cn)))))
+        ;; nil in case of unresolved ref
+        cs-deps  (->> deps (filter (fn [{rt :resource_type}] (contains? #{"CodeSystem" nil} rt))))
         all-resolved (or (empty? cs-deps) (= #{"resolved"} (->> cs-deps (mapv (fn [{st :status}] st)) (into #{}))))
+        ;; FIXME check cn turn into query
         static (and all-resolved
-                    (or (empty? cs-deps) (= #{"complete"} (->> cs-deps (mapv (fn [{cn :canonical}] (:content cn))) (into #{})))))]
+                    (or (empty? cs-deps)
+                        (->> (pg/execute! context {:dsql {:select {:content [:distinct [:resource->> :content]]}
+                                                      :from :codesystem
+                                                      :where [:in :id [:pg/params-list (mapv :dep_id cs-deps)]]}})
+                             (every? (fn [{c :content}] (= "complete" c))))))]
     {:id (:id vs)
      :url (:url vs)
      :processing {:status "processed"
@@ -44,7 +51,7 @@
 (defn classify-valuesets [context]
   (time
    (let [context (system/ctx-set-log-level context :error)]
-     (->> (pg.repo/select context {:table "valueset" :where [:pg/sql "resource#>>'{processing, status}' <> 'processed'"]})
+     (->> (pg.repo/select context {:table "valueset" :where [:pg/sql "resource#>>'{processing, status}' is null or resource#>>'{processing, status}' <> 'processed'"]})
           (map-indexed (fn [i vs]
                          (when (= 0 (mod i 100)) (print ".") (flush))
                          (let [status (valueset-status context vs)]
@@ -66,7 +73,12 @@
         (when-let [cn (pg.repo/read context {:table "canonical" :match {:id dip}})]
           (pg.repo/read context {:table (:resource_type cn) :match {:id dip}}))))))
 
-(def concept-select [:pg/list :system :code :display :canonical_id])
+(defn concept-select [vs]
+  [:pg/list
+   :system
+   :code
+   :display
+   [:as [:pg/param (:id vs)] "canonical_id"]])
 
 (defn build-filter [flt]
   (->> flt
@@ -107,17 +119,17 @@
          (reduce
           (fn [acc {system :system filter :filter concept :concept valuesets :valueSet :as incl}]
             (cond
-              concept (conj acc {:select concept-select
+              concept (conj acc {:select (concept-select vs)
                                  :comment system
                                  :from :concept
                                  :where {:valueset [:= :canonical_id [:pg/param (:id vs)]]}})
               filter  (let [cs (resolve-canonical context vs system)]
-                        (conj acc {:select concept-select
+                        (conj acc {:select (concept-select vs)
                                    :comment system
                                    :from :concept
                                    :where {:system-filter [:and [:= :canonical_id [:pg/param (:id cs)]] (build-filter filter)]}}))
               system  (let [cs (resolve-canonical context vs system)]
-                        (conj acc {:select concept-select
+                        (conj acc {:select (concept-select vs)
                                    :comment system
                                    :from :concept
                                    :where {:system [:= :canonical_id [:pg/param (:id cs)]]}}))
@@ -140,11 +152,10 @@
 (defn expand [context vs]
   (pg/execute! context {:dsql (expand-query context vs)}))
 
-
 (defn expand-insert-query [context vs]
      {:ql/type :pg/insert-with-select
       :into :valueset_expansion
-      :columns concept-select
+      :columns [:pg/list :code :system :display :canonical_id]
       :select (expand-query context vs)})
 
 (defn expand-in-db [context vs]
@@ -164,22 +175,34 @@
   (pg.repo/truncate context {:table "valueset_expansion"})
   )
 
+(defn expand-valuest [context vs]
+  (try
+    (pg/execute! context {:sql ["delete from valueset_expansion where canonical_id = ?" (:id vs)]})
+    (let [result (expand-in-db context vs)]
+      (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', '\"expanded\"') where id = ?" (:id vs)]})
+      result)
+    (catch Exception e
+      (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', '\"error\"') where id = ?" (:id vs)]})
+      (println :ERROR (str (:url vs)  " " :error (pr-str (.getMessage e)))))))
+
 (defn expand-valuesets [context]
   (let [context (system/ctx-set-log-level context :error)
         progress (atom 0)]
     (->> (pg.repo/select
-          context {:table "valueset"
-                   :where [:pg/sql "resource#>>'{processing, expand}' is null and resource#>>'{processing, static}' = 'true'"]})
+          context {:table "valueset" :where [:pg/sql "resource#>>'{processing, expand}' is null and resource#>>'{processing, static}' = 'true'"]})
          (pmap (fn [vs]
-                 (try
-                   (swap! progress inc)
-                   (when (= 0 (mod @progress 1000)) (println "."))
-                   (expand-in-db context vs)
-                   (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', '\"expanded\"') where id = ?" (:id vs)]})
-                   (catch Exception e
-                     (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', '\"error\"') where id = ?" (:id vs)]})
-                     (println :ERROR (str (:url vs)  " " :error (pr-str (.getMessage e))))))))
+                 (swap! progress inc)
+                 (when (= 0 (mod @progress 100)) (print ".") (flush))
+                 (expand-valuest context vs)))
          (count))))
+
+
+(defn valueset-concepts [context vs]
+  (pg/execute! context {:dsql {:select :* :from :valueset_expansion :where [:= :canonical_id [:pg/param (:id vs)]]}}))
+
+
+(defn codesystem-concepts [context cs]
+  (pg/execute! context {:dsql {:select :* :from :concept :where [:= :canonical_id [:pg/param (:id cs)]]}}))
 
 
 (defn migrate [context]
@@ -211,10 +234,14 @@
   )
 
 (defn drop-tables [context]
-  (pg.repo/drop-repo context {:table "concept"}))
+  (pg.repo/drop-repo context {:table "concept"})
+  (pg.repo/drop-repo context {:table "valueset_expansion"})
+  )
 
 (defn truncate [context]
-  (pg.repo/truncate context {:table "concept"}))
+  (pg.repo/truncate context {:table "concept"})
+  (pg.repo/truncate context {:table "valueset_expansion"})
+  )
 
 
 (defn load-concepts [context]
@@ -237,31 +264,78 @@ group by 1,2,3,4 "})
 (comment
 
   (def context (system/start-system {:services ["pg" "pg.repo"] :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+
   (migrate context)
 
   (drop-tables context)
 
-  (truncate context)
 
-  (load-concepts context)
+
+  (do
+    (truncate context)
+    (pg/execute! context {:sql "update valueset set resource = (resource - 'processing')"})
+    (println :classify)
+    (time (classify-valuesets context))
+    (println :load)
+    (time (load-concepts context))
+    (println :expand)
+
+    (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', 'null')"]})
+    (pg.repo/truncate context {:table "valueset_expansion"})
+    (time (expand-valuesets context))
+
+    (status-of-valuesets context)
+    )
+
+
+  ;;HERE
+
+  (pg/format-dsql
+   (expand-insert-query context (pg.repo/read context {:table "valueset" :match {:id "899b166f-1151-56be-a694-44154a58b98a"}}))
+   )
+
+  (expand-in-db context (pg.repo/read context {:table "valueset" :match {:id "899b166f-1151-56be-a694-44154a58b98a"}}))
+
+  (pg.repo/select context {:table "valueset_expansion" :match {:canonical_id "899b166f-1151-56be-a694-44154a58b98a"} :limit 10})
+
+  (pg.repo/truncate context {:table "valueset_expansion" :limit 10})
+  (pg.repo/select context {:table "valueset_expansion" :limit 10})
+
+  (pg.repo/select context {:table "valueset" :limit 10})
 
   (pg.repo/select context {:table "concept" :limit 100})
 
   (valueset-status context {:id #uuid "9af72049-0c52-5afd-a983-273c649e2536"})
 
-  (classify-valuesets context)
-
-  (status-of-valuesets context)
-
-  (pg.repo/truncate context {:table "valueset_expansion"})
-
-  (time (expand-valuesets context))
+  
 
   (pg/execute! context {:sql "select count(*) from valueset_expansion"})
 
   (pg.repo/select context {:table "valueset_expansion" :limit 10})
 
   ;; HERE
+
+  ;; TODO: wrong classification
+
+  (def fed-vs
+    (->> (get-vs context "http://hl7.org/fhir/ValueSet/provider-taxonomy")
+         (first)))
+
+  (:compose fed-vs)
+
+  (far.package/canonical-deps context fed-vs)
+
+  (pg.repo/select context {:table "canonical_deps" :limit 10 :match {:definition_id (:id fed-vs)}})
+
+  (valueset-status context fed-vs)
+
+  (->> (get-cs context "http://nucc.org/provider-taxonomy")
+       (first)
+       :content)
+
+  (->> (pg.repo/select context {:table "valueset"  :limit 10})
+       (mapv (fn [vs]
+               [(:url vs) (:processing vs) (mapv :code (valueset-concepts context vs))])))
 
 
   ;;TODO write tests for this guys
@@ -290,11 +364,16 @@ group by 1,2,3,4 "})
 
   (def vsurl "http://terminology.hl7.org/ValueSet/v3-PostalAddressUse")
 
+  (def vsurl "http://cts.nlm.nih.gov/fhir/ValueSet/2.16.840.1.113762.1.4.1182.370")
+
+
   (->> (get-vs context vsurl)
        (first)
        ;; (expand-dsql context)
-       (expand context)
-       ;; (expand-query context)
+       ;;(expand context)
+       ;;(expand-query context)
+
+       (valueset-status context)
        )
 
   (far.tx.concepts/extract-concept-cs
@@ -438,6 +517,8 @@ group by 1,2,3,4 "})
 
 
   (pg.repo/select context {:table "package_dependency" :limit 100})
+  (pg.repo/select context {:table "concept" :limit 100})
+
   (pg.repo/select context {:table "capabilitystatement" :limit 100})
   (pg.repo/select context {:table "terminologycapabilities" :limit 100})
 

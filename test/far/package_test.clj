@@ -1,6 +1,7 @@
 (ns far.package-test
   (:require [system]
             [far.package]
+            [far.package.repos]
             [pg]
             [pg.repo]
             [clojure.test :as t]
@@ -26,6 +27,7 @@
   (ensure-context)
 
   (far.package/drop-tables context)
+  (far.package.repos/migrate context)
 
   )
 
@@ -98,11 +100,10 @@
 
   (pg.repo/select context {:table "canonical_deps"  :limit 10})
 
+
+
   (def pts (pg/execute! context {:sql "select id,url,package_name from canonical where url = 'http://hl7.org/fhir/StructureDefinition/Patient' limit 10"}))
-
-
-  (far.package/canonical-deps context (first pts))
-
+  (time (far.package/canonical-deps context (first pts)))
 
   (far.package/canonicals context {:match {:resource_type "ValueSet"} :limit 10})
   (far.package/canonicals context {:match {:resource_type "CodeSystem"} :limit 10})

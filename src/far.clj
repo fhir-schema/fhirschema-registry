@@ -1,11 +1,14 @@
 (ns far
   (:require
    [system]
-   [gcs :as gcs]
-   [http :as http]
-   [pg :as pg]
+   [gcs]
+   [http]
+   [pg]
+   [pg.repo]
    [clojure.string :as str]
    [cheshire.core :as json]
+   [far.package]
+   [far.tx]
    [clojure.tools.cli :refer [parse-opts]]))
 
 (system/defmanifest
@@ -137,35 +140,18 @@ ORDER BY dep_name
 
 (system/defstop [context state])
 
-(def cli-options
-  ;; An option with a required argument
-  [["-p" "--port PORT" "Port number"
-    :default 80
-    :parse-fn #(Integer/parseInt %)
-    :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]]
-
-   ["-v" nil "Verbosity level"
-    :id :verbosity
-    :default 0
-    :update-fn inc]
-
-   ["-h" "--help"]])
-
 (defn main [config]
   (system/start-system
    (assoc config
           :services ["pg" "http" "http.openapi" "gcs" "far"]
           :pg (cheshire.core/parse-string (slurp "connection.json") keyword))))
 
-(defn -main [& args]
-  (let [opts (parse-opts args cli-options)]
-    (main {:http {:port (get-in opts [:options :port])}})))
 
 (comment
 
-  (def context (system/start-system {:services ["http" "http.openapi" "pg" "gcs" "far"]
+  (def context (system/start-system {:services ["http" "http.openapi" "pg" "gcs" "far" "far.ui"]
                                      :http {:port 7777}
-                                     :pg (json/parse-string (slurp "gcp-connection.json") keyword)}))
+                                     :pg (json/parse-string (slurp "connection.json") keyword)}))
 
   (system/stop-system context)
 

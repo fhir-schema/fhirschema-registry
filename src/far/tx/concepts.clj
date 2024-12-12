@@ -90,7 +90,7 @@
        context {:table "codesystem" :fetch-size 1000}
        (fn [cs]
          (println (:url cs))
-         (->> (far.tx.concepts/extract-concept-cs cs)
+         (->> (extract-concept-cs cs)
               (mapv (fn [c] (insert c))))))))))
 
 (defn load-concepts-from-vs [context]
@@ -102,7 +102,7 @@
         (pg.repo/fetch
          context {:table "valueset" :fetch-size 1000}
          (fn [cs]
-           (->> (far.tx.concepts/extract-concept-vs context cs)
+           (->> (extract-concept-vs cs)
                 (mapv (fn [c]
                         (if-let [cc (get @concept-ids (:id c))]
                           (do (println (:url cs) (:package_name cs) (:package_version cs) (:code c)))

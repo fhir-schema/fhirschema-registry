@@ -51,33 +51,49 @@
   (pg.repo/select context (merge {:table "canonical" :order-by [:pg/list :url :version]} opts)))
 
 
+;; TODO: hacky algorithm use different types of keys uuid and url
 (defn resolve-canonical-deps [context deps-idx can-id path & [details]]
   (if (contains? deps-idx can-id)
     deps-idx
     (let [deps-idx (assoc deps-idx can-id (merge {:path path} details))]
       (->> (pg.repo/select context {:table "canonical_deps" :match {:definition_id can-id}})
            (reduce (fn [deps-idx {dep-id :dep_id :as dep}]
-                     (cond (or (contains? deps-idx dep-id) (= ":reference" (:type dep))) ;;skip refs
+                     (cond (or (contains? deps-idx dep-id) (= "reference" (:type dep))) ;;skip refs
                            deps-idx
                            (nil? dep-id)
-                           (assoc deps-idx can-id (merge dep {:path path}))
+                           (assoc deps-idx (:url dep) (merge dep {:path path}))
                            :else (resolve-canonical-deps context deps-idx dep-id (conj path [(:definition dep) (:type dep)]) dep)))
                    deps-idx)))))
 
 (defn reduce-by [key col]
   (->> col (reduce (fn [acc m] (assoc acc (get m key) m)) {})))
 
-(defn canonical-deps [context {id :id :as canonical} & [max-deps]]
+(defn canonical-deps-old [context {id :id :as canonical} & [max-deps]]
   (assert (and (map? canonical) id))
   (let [deps (resolve-canonical-deps context {} id [] {})
-        canonicals-idx (when (seq (dissoc deps id))
-                         (->> (pg.repo/select context {:table "canonical" :match {:id (into [] (keys (dissoc deps id)))}})
+        ids (->> (keys (dissoc deps id)) (filterv uuid?))
+        canonicals-idx (when (seq ids)
+                         (->> (pg.repo/select context {:table "canonical" :match {:id ids}})
                               (reduce-by :id)))]
     (->> (dissoc deps id)
          (mapv (fn [[id dep]]
                  (if-let [cn (get canonicals-idx id)]
                    (assoc dep :canonical cn)
                    dep))))))
+
+(defn canonical-deps [context {id :id :as canonical}]
+  (loop [ids #{id} acc #{}]
+   (let [deps (pg/execute! context {:dsql {:select :*
+                                           :from :canonical_deps
+                                           :where [:and
+                                                   [:in :definition_id [:pg/params-list ids]]
+                                                   [:or [:is :dep_id nil] [:not [:in :dep_id  [:pg/params-list ids]]]]
+                                                   [:pg/sql "type <> 'reference'"]]}})
+         new-ids (->> (mapv :dep_id deps) (filterv identity))]
+     (if (empty? new-ids)
+       (into acc deps)
+       (recur (into ids new-ids) (into acc deps))))))
+
 
 (system/defmanifest
   {:description "create tables and save packages into this tables"
