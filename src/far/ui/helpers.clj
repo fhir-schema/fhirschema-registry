@@ -29,23 +29,45 @@ function open_tab(id, cmp_id) {
   tabs[cmp_id] = id;
 }
 "
+
   )
-(defn hiccup-response [body]
+
+(defn top-nav []
+  [:nav {:class "bg-gray-800"}
+   [:div {:class "px-2 sm:px-4 lg:px-4"}
+    [:div {:class "relative flex h-16 items-center justify-between"}
+     [:div {:class "flex flex-1 items-center justify-center sm:items-stretch sm:justify-start"}
+      [:div {:class "flex shrink-0 items-center"}
+       [:img {:class "h-8 w-auto", :src "https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500", :alt "Your Company"}]]
+      [:div {:class "hidden sm:ml-6 sm:block"}
+       [:div {:class "flex space-x-4"}
+        [:a {:href "/packages",   :class "rounded-md px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white", :aria-current "page"} "Packages"]
+        [:a {:href "/canonicals", :class "rounded-md px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white"} "Canonicals"]]]]]]])
+
+
+(defn hx-target [request]
+  (get-in request [:headers "hx-target"]))
+
+(defn hiccup-response [request body]
   {:status 200
    :headers {"content-type" "text/html"}
    :body (hiccup.core/html
-          [:html
-           [:head
-            [:script {:src "https://cdn.tailwindcss.com"}]
-            [:script {:src "https://unpkg.com/htmx.org@2.0.3" :integrity "sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" :crossorigin "anonymous"}]
-            [:script {:src "https://kit.fontawesome.com/d9939909b1.js" :crossorigin "anonymous"}]
-            [:link {:rel "stylesheet", :href "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css"}]
-            [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"}]
-            [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/clojure.min.js"}]
-            [:script open-tab-fn]]
+          (if (hx-target request)
+            body
+            [:html
+             [:head
+              [:script {:src "https://cdn.tailwindcss.com"}]
+              [:script {:src "https://unpkg.com/htmx.org@2.0.3" :integrity "sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" :crossorigin "anonymous"}]
+              [:script {:src "https://kit.fontawesome.com/d9939909b1.js" :crossorigin "anonymous"}]
+              [:link {:rel "stylesheet", :href "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css"}]
+              [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"}]
+              [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/clojure.min.js"}]
+              [:script open-tab-fn]]
 
-           [:body {:hx-boost "true"}
-            [:div body [:script "hljs.highlightAll();"]]]])})
+             [:body {:hx-boost "true"}
+              [:div (top-nav)
+               body
+               [:script "hljs.highlightAll();"]]]]))})
 
 (defn table [columns rows & [row-fn]]
   (let [row-fn (or row-fn (fn [x] (->> columns (mapv (fn [k] (get x k))))))]

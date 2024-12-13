@@ -27,21 +27,21 @@
                [:span.text-sm.text-gray-400 (elipse (:description p))]]))
        (into [:div#search-results])))
 
-(defn packages-html [context req]
+(defn packages-html [context request]
   (let [pkgs (pg.repo/select context {:table "package_version" :order-by [:pg/desc :name :version]})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       [:br]
       (h/search-input {:path ["packages" "search"]})
       [:br]
       (render-packages pkgs)])))
 
-(defn packages-search-html [context {{q :search} :query-params}]
+(defn packages-search-html [context {{q :search} :query-params :as request}]
   (let [pkgs (pg.repo/select context {:table "package_version"
                                       :where (when-not (str/blank? q)
                                                [:ilike :name [:pg/param (str "%" (str/replace q #"\s+" "%") "%")]])
                                       :order-by [:pg/desc :name :version]})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div
       (when (empty? pkgs)
         [:div.text-gray-400 "No results"])
@@ -87,10 +87,10 @@ order by 1
                  (when-let [deps (:deps d)]
                    [:div.px-8  (render-deps deps)])])))))
 
-(defn package-html [context {{id :id} :route-params}]
+(defn package-html [context {{id :id} :route-params :as request}]
   (let [pkg (pg.repo/read context {:table "package_version" :match {:id id}})
         deps-tree (far.package/package-deps-tree context pkg)]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
 
       [:div.flex.space-x-4
@@ -113,10 +113,10 @@ order by 1
 
       ])))
 
-(defn valuesets-html [context {{id :id} :route-params}]
+(defn valuesets-html [context {{id :id} :route-params :as request}]
   (let [pkg       (pg.repo/read context {:table "package_version" :match {:id id}})
         valuesets (pg.repo/select context {:table "valueset" :select [:id :name :url :version :processing] :match {:package_id id}})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       [:div.flex.space-x-4
        (canonicals-tabs context id)
@@ -135,10 +135,10 @@ order by 1
                     (:expand (:processing c))]))]]])))
 
 
-(defn codesystems-html [context {{id :id} :route-params}]
+(defn codesystems-html [context {{id :id} :route-params :as request}]
   (let [pkg       (pg.repo/read context {:table "package_version" :match {:id id}})
         valuesets (pg.repo/select context {:table "codesystem" :match {:package_id id}})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       [:div.flex.space-x-4
        (canonicals-tabs context id)
@@ -151,10 +151,10 @@ order by 1
                     (:version c)
                     (:content c)]))]]])))
 
-(defn canonicals-html [context {{rt :resource_type id :id} :route-params}]
+(defn canonicals-html [context {{rt :resource_type id :id} :route-params :as request}]
   (let [pkg       (pg.repo/read context {:table "package_version" :match {:id id}})
         cns (pg.repo/select context {:table "canonical" :match {:package_id id :resource_type rt}})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       [:div.flex.space-x-4
        (canonicals-tabs context id)
@@ -170,13 +170,13 @@ order by 1
 
 
 
-(defn valueset-html [context {{id :id} :route-params}]
+(defn valueset-html [context {{id :id} :route-params :as request}]
   (let [cn (pg.repo/read context {:table "valueset" :match {:id id}})
         expand-sql (far.tx/expand-query context cn)
         expansion (far.tx/expand context cn)
         ;;concepts (far.tx/valueset-concepts context cn)
         deps (far.package/canonical-deps context cn)]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       (h/breadcramp
        "packages" "packages"
@@ -219,10 +219,10 @@ order by 1
 
       ])))
 
-(defn codesystem-html [context {{id :id} :route-params}]
+(defn codesystem-html [context {{id :id} :route-params :as request}]
   (let [cn (pg.repo/read context {:table "codesystem" :match {:id id}})
         concepts (far.tx/codesystem-concepts context cn)]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       (h/breadcramp
        "packages" "packages"
@@ -247,9 +247,9 @@ order by 1
 
      )))
 
-(defn canonical-html [context {{rt :resource_type id :id} :route-params}]
+(defn canonical-html [context {{rt :resource_type id :id} :route-params :as request}]
   (let [cn (pg.repo/read context {:table (str/lower-case rt) :match {:id id}})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       (h/breadcramp
        "packages" "packages"
@@ -375,10 +375,12 @@ order by 1
           (apply h/accordion)
           )]))
 
-(defn sd-layout [context {{hxt "hx-target" :as hs} :headers} cn content]
-  (println hs)
-  (h/hiccup-response
-   (if hxt
+(defn hx-target [request]
+  (get-in request [:headers "hx-target"]))
+
+(defn sd-layout [context request cn content]
+  (h/hiccup-response request 
+   (if (hx-target request)
      content
      [:div.flex.space-x-4
       [:div.bg-gray-100 (structuredef-nav context (:package_id cn))]
@@ -429,10 +431,10 @@ order by 1
        ["StructureDefinition" (h/formats-block cn)]
        [(str "Dependant (" (count dependant) ")") (render-dependant dependant)])])))
 
-(defn structuredefs-html [context {{id :id} :route-params}]
+(defn structuredefs-html [context {{id :id} :route-params :as request}]
   (let [pkg       (pg.repo/read context {:table "package_version" :match {:id id}})
         cns (pg.repo/select context {:table "canonical" :match {:package_id id :resource_type "StructureDefinition"}})]
-    (h/hiccup-response
+    (h/hiccup-response request 
      [:div.px-4
       [:div.flex.space-x-4
        (canonicals-tabs context id)
@@ -444,6 +446,31 @@ order by 1
                    [(h/link ["canonicals" "StructureDefinition" (:id c)] (str (or (:name c) (:url c))))
                     (:version c)
                     (:content c)]))]]])))
+
+
+;;TODO prefix search
+(defn canonicals-lookup [context request]
+  (h/hiccup-response request 
+   (if (hx-target request)
+     (let [q (get-in request [:query-params :search])
+           cns (pg.repo/select
+                context {:table "canonical"
+                         :where (when-not (str/blank? q)
+                                  [:ilike :url [:pg/param (str "%" (str/replace q #"\s" "%") "%")]])
+                         :order-by :url
+                         :limit 100})]
+       (h/table [] cns
+                (fn [r]
+                  [(:resource_type r)
+                   (h/link ["packages" (:package_id r)] (str (:package_name r) "@" (:package_version r)))
+
+                   (h/link ["canonicals" (:resource_type r) (:id r)] (:url r))])))
+     [:div.px-4
+      [:br]
+      (h/search-input {:path ["canonicals"]})
+      [:br]
+      [:div#search-results]])))
+
 
 (defn mount-routes [context]
   (http/register-endpoint context {:method :get :path "/packages" :fn #'packages-html})
@@ -458,12 +485,16 @@ order by 1
 
   (http/register-endpoint context {:method :get :path "/packages/:id/StructureDefinition" :fn #'structuredefs-html})
   (http/register-endpoint context {:method :get :path "/canonicals/StructureDefinition/:id" :fn #'structuredef-html})
+  (http/register-endpoint context {:method :get :path "/canonicals" :fn #'canonicals-lookup})
 
   )
+
 
 (system/defstart
   [context _]
   (mount-routes context))
+
+;; TODO: introduce layouts and middlewares
 
 (comment
   (def context far/context)
