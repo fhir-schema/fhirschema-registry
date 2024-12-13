@@ -33,6 +33,9 @@
 (defn package-deps [context pkv]
   (loader/resolve-all-deps context pkv))
 
+(defn package-deps-tree [context pkv]
+  (loader/deps-tree context pkv))
+
 (defn package-deps-print [context pkv]
   (loader/print-deps-tree
    (loader/deps-tree context pkv)))

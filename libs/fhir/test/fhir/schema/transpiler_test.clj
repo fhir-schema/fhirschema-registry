@@ -18,6 +18,12 @@
    [{:type :exit, :el :a} {:type :enter, :el :b}])
 
   (matcho/match
+   (calculate-actions (parse-path {:path "R.a" }) (parse-path {:path "R.b.c"}))
+   [{:type :exit, :el :a} {:type :enter, :el :b} {:type :enter, :el :c}])
+
+  (calculate-actions (parse-path {:path "R.b.c"}) (parse-path {:path "R.x" }))
+
+  (matcho/match
    (calculate-actions (parse-path {:path "R.a.b.c"}) [])
    [{:type :exit, :el :c} {:type :exit, :el :b} {:type :exit, :el :a}])
 
@@ -369,6 +375,22 @@
 
    }
 
+  (matcho/match
+   (translate
+    {:differential
+    {:element
+      [{:path "DocumentReference"}
+       {:path "DocumentReference.context.related",
+        :type [{:code "Reference", :targetProfile ["http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomics-report"]}]}]}})
+
+   {:class "unknown",
+    :elements
+    {:context
+     {:type nil? :refers nil?
+      :elements
+      {:related
+       {:type "Reference",
+        :refers [{:profile "http://hl7.org/fhir/uv/genomics-reporting/StructureDefinition/genomics-report"}],}}}}})
 
 
 

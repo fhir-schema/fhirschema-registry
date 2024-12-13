@@ -180,16 +180,20 @@
 
 
 (defn apply-actions [value-stack actions value]
-  (->> actions
-       (reduce
-        (fn [stack {tp :type el :el :as action}]
-          #_(debug-action action stack)
-          (case tp
-            :enter       (conj stack value)
-            :enter-slice (conj stack value)
-            :exit        (pop-and-update stack (fn [last-v peek-v] (add-element el last-v peek-v)))
-            :exit-slice  (pop-and-update stack (fn [last-v peek-v] (build-slice action last-v peek-v)))))
-        value-stack)))
+  ;; TODO: if next is enter - enter with empty value
+  (loop [stack value-stack
+         [a & as] actions]
+    (if (nil? a)
+      stack
+      (let [{tp :type el :el :as action} a
+            ;; _ (debug-action action stack)
+            value (if (= :enter (:type (first as))) {} value) ;; we need this is we enter several items in a path, i.e .a .b.c.d
+            stack (case tp
+                    :enter       (conj stack value)
+                    :enter-slice (conj stack value)
+                    :exit        (pop-and-update stack (fn [last-v peek-v] (add-element el last-v peek-v)))
+                    :exit-slice  (pop-and-update stack (fn [last-v peek-v] (build-slice action last-v peek-v))))]
+        (recur stack as)))))
 
 
 ;; alorythm
@@ -318,7 +322,7 @@
 
 
 (defn build-resource-header [structure-definition]
-  (-> (select-keys structure-definition [:name :type :url :version :base])
+  (-> (select-keys structure-definition [:name :type :url :version :description])
       (cond-> (:baseDefinition structure-definition) (assoc :base (:baseDefinition structure-definition)))
       (cond-> (:abstract structure-definition) (assoc :abstract true))
       (assoc :class

@@ -145,9 +145,10 @@
 (defn deps-tree [context pkv]
   (->> (:dependencies pkv)
        (reduce (fn [deps [k v]]
-                 (assoc deps k {:version v
-                                :deps (let [dp (pg.repo/read context {:table "package_version" :match {:name (name k) :version v}})]
-                                        (deps-tree context dp))}))
+                 (let [dp (pg.repo/read context {:table "package_version" :match {:name (name k) :version v}})
+                       ndeps (deps-tree context dp)]
+                   (assoc deps k (cond-> {:version v :id (:id dp)}
+                                   (not (empty? ndeps)) (assoc :deps ndeps)))))
                {})))
 
 (defn print-deps-tree [deps-tree & [ident]]
