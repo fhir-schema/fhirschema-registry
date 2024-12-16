@@ -7,7 +7,7 @@
   (last (str/split (or url "") #"/")))
 
 (defn generic [s]
-  [:span.flex.space-x-1.items-baseline.inline
+  [:span.flex.items-baseline.inline
    [:span.text-gray-400 "&lt;"] s [:span.text-gray-400 "&gt;"]])
 
 (declare render-schema)
@@ -34,12 +34,21 @@
                      [:span.font-mono.font-semibold.text-gray-700
                       "+"(name k)
                       (when (contains? required k)
-                        [:i.fa-sharp.fa-solid.fa-asterisk.text-red-600.text-xs.relative.-top-1] )]
-                     [:span.text-sky-800.flex.space-x-2.items-center.font-mono
-                      [:span.whitespace-nowrap
+                        [:i.fa-sharp.fa-solid.fa-asterisk.text-red-600.text-xs.relative.-top-1] )
+                      [:span.text-gray-400 ":"]]
+                     [:span.text-sky-800.flex.space-x-1.items-center.font-mono
+                      [:span.whitespace-nowrap.flex.space-x-1
                        (when-let [tp (:type el)]
-                         (str ":" tp))
-                       (generic (url-to-name (:url el)))
+                         (if-let [tpr (:type_ref el)]
+                           [:a.px-2.rounded.hover:bg-blue-100
+                            {:href (h/href ["canonicals" (:resourceType tpr) (:id tpr)])} tp]
+                           [:span.text-red-500 tp]))
+                       (generic
+                        (let [extnm (url-to-name (:url el))]
+                          (if-let [extr (:extension_ref el)]
+                            [:a.px-2.rounded.hover:bg-blue-100
+                             {:href (h/href ["canonicals" (:resourceType extr) (:id extr)])} extnm]
+                            [:span.text-red-500 extnm])))
                        [:span.text-gray-500 "[" (get el :min 0) "," (get el :max "*")  "]"]]]]])))
       (->> (:elements schema)
            (sort-by #(:index (second %)))
@@ -52,11 +61,11 @@
                      (when (contains? required k)
                        [:i.fa-sharp.fa-solid.fa-asterisk.text-red-600.text-xs.relative.-top-1] )
                      [:span.text-gray-400 ":"]]
-                    [:span.text-sky-800.flex.space-x-2.items-center.font-mono
+                    [:span.text-sky-800.flex.space-x-1.items-center.font-mono
                      [:span.whitespace-nowrap
                       (when-let [tp (:type el)]
                         (if-let [tpr (:type_ref el)]
-                          [:a.px-2.rounded.hover:bg-gray-200
+                          [:a.px-2.rounded.hover:bg-blue-100
                            {:href (h/href ["canonicals" (:resourceType tpr) (:id tpr)])} tp]
                           [:span.text-red-500 tp]))
                       (when-let [cr (:contentReference el)]
@@ -70,7 +79,7 @@
                           [:span (case (:strength b) "required" "!" "extensible" "+" "preferred" "!?" "example" "?")]
                           (let [vsu (url-to-name (:valueSet b))]
                             (if-let [vsr (:valueSet_ref b)]
-                              [:a.px-2.rounded.hover:bg-gray-200
+                              [:a.px-2.rounded.hover:bg-blue-100
                                {:href (h/href ["canonicals" (:resourceType vsr) (:id vsr)])} vsu]
                               [:span.text-red-500 vsu]))])))
                      (when-let [r (:refers el)]
@@ -113,7 +122,7 @@
      [:span (:type schema)]
      (generic (let [nm (url-to-name (get schema :base))]
                 (if-let [br (:base_ref schema)]
-                  [:a.px-2.rounded.hover:bg-gray-200 {:href (h/href ["canonicals" (:resourceType br) (:id br)])} nm]
+                  [:a.px-2.rounded.hover:bg-blue-100 {:href (h/href ["canonicals" (:resourceType br) (:id br)])} nm]
                   nm)))]]
    [:div.pl-4
     (render-schema schema)]])

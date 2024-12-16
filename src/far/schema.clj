@@ -29,6 +29,17 @@
                                            (assoc b :valueSet_ref {:id (:dep_id dep) :resourceType (:resource_type dep)})
                                            b)))
 
+    (:extensions schema) (assoc :extensions (->> (:extensions schema)
+                                                 (reduce (fn [acc [k v]]
+                                                           (assoc acc k (cond-> (enrich-node v deps-idx)
+                                                                          (:url v)
+                                                                          (assoc :extension_ref
+                                                                                 (if-let [dep (get-in deps-idx [(:url v)])]
+                                                                                             {:id (:dep_id dep) :resourceType (:resource_type dep)}
+                                                                                             (println :missed (:url v) (keys deps-idx))))
+
+                                                                          ))) {})))
+
     (:elements schema) (assoc :elements (->> (:elements schema)
                                              (reduce (fn [acc [k v]] (assoc acc k (enrich-node v deps-idx))) {})))))
 
