@@ -112,14 +112,15 @@
 
   (pg.repo/register-repo
    context {:table  "canonical_deps"
-            :primary-key [:definition_id :type :url]
+            :primary-key [:definition_id :type :url :version]
             :columns {:package_id {:type "uuid" :index true :required true}
                       :definition_id {:type "uuid" :index true :required true}
                       :definition {:type "text" :required true}
+                      :definition_version {:type "text"}
+                      :definition_resource_type {:type "text"}
                       :type {:type "text"}
                       :package_name {:type "text"}
                       :package_version {:type "text"}
-                      :definition_version {:type "text"}
                       :resource_type {:type "text" :required true}
                       :url {:type "text" :index true}
                       :version {:type "text" :index true}

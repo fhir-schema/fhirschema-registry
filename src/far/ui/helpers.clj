@@ -35,7 +35,7 @@ function open_tab(id, cmp_id) {
 (defn top-nav []
   [:nav {:class "bg-gray-800"}
    [:div {:class "px-2 sm:px-4 lg:px-4"}
-    [:div {:class "relative flex h-16 items-center justify-between"}
+    [:div {:class "relative flex h-12 items-center justify-between"}
      [:div {:class "flex flex-1 items-center justify-center sm:items-stretch sm:justify-start"}
       [:div {:class "flex shrink-0 items-center"}
        [:img {:class "h-8 w-auto", :src "https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500", :alt "Your Company"}]]
@@ -65,9 +65,24 @@ function open_tab(id, cmp_id) {
               [:script open-tab-fn]]
 
              [:body {:hx-boost "true"}
-              [:div (top-nav)
-               body
-               [:script "hljs.highlightAll();"]]]]))})
+              body
+              [:script "hljs.highlightAll();"]]]))})
+
+(defn layout [context request fragments-map]
+  (if-let [trg (hx-target request)]
+    (if-let [trg-fn (get fragments-map (keyword trg))]
+      {:status 200 :body (hiccup.core/html (trg-fn))}
+      {:status 500 :body (str "Error: no fragment for " trg)})
+    (hiccup-response
+     request
+     [:div (top-nav)
+      [:div.flex
+       (when-let [tnav (:topnav fragments-map)]
+         [:div#topnav.bg-gray-200.border-r (if (fn? tnav) (tnav) tnav)])
+       (when-let [nav (:navigation fragments-map)]
+         [:div#nav.bg-gray-100.border-r (if (fn? nav) (nav) nav)])
+       (when-let [cnt (:content fragments-map)]
+         [:div#content.flex-1 (if (fn? cnt) (cnt) cnt)])]])))
 
 (defn table [columns rows & [row-fn]]
   (let [row-fn (or row-fn (fn [x] (->> columns (mapv (fn [k] (get x k))))))]
@@ -76,24 +91,20 @@ function open_tab(id, cmp_id) {
                            (mapv (fn [x] [:td.p-2.border x]))
                            (into [:tr]))))
          (into [:tbody])
-         (conj [:table.text-sm]))))
+         (conj [:table.text-sm.mt-2
+                (when (seq columns)
+                                 [:thead
+                                  (->> columns (mapv (fn [c] [:th.border.px-2.py-1.bg-gray-100.font-semibold (name c)]))
+                                       (into [:tr])
+                                       )]
+                                 )]))))
 
 
 (def bc-home [:svg {:class "size-5 shrink-0", :viewBox "0 0 20 20", :fill "currentColor", :aria-hidden "true", :data-slot "icon"} [:path {:fill-rule "evenodd", :d "M9.293 2.293a1 1 0 0 1 1.414 0l7 7A1 1 0 0 1 17 11h-1v6a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6H3a1 1 0 0 1-.707-1.707l7-7Z", :clip-rule "evenodd"}]])
 
 (def bc-delim
-  [:svg
-   {:class "size-5 shrink-0 text-gray-400",
-    :viewBox "0 0 20 20",
-    :fill "currentColor",
-    :aria-hidden "true",
-    :data-slot "icon"}
-   [:path
-    {:fill-rule "evenodd",
-     :d
-     "M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z",
-     :clip-rule "evenodd"}]]
-  )
+  [:svg {:class "size-5 shrink-0 text-gray-400", :viewBox "0 0 20 20", :fill "currentColor", :aria-hidden "true", :data-slot "icon"}
+   [:path {:fill-rule "evenodd", :d "M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z", :clip-rule "evenodd"}]])
 
 (defn bc-li [& xs]
   [:li {:class "flex"}
@@ -130,16 +141,16 @@ function open_tab(id, cmp_id) {
    (bc-container)))
 
 (defn yaml-block [data]
-  [:pre.p-2.text-sm.bg-gray-100
+  [:pre.p-2.text-xs.bg-gray-100
    [:code {:class "language-yaml"} (clj-yaml.core/generate-string data)]])
 
 (defn json-block [data]
-  [:pre.p-2.text-sm.bg-gray-100
+  [:pre.p-2.text-xs.bg-gray-100
    [:code {:class "language-json"}
     (cheshire.core/generate-string data {:pretty true})]])
 
 (defn edn-block [data]
-  [:pre.p-2.text-sm.bg-gray-100
+  [:pre.p-2.text-xs.bg-gray-100
    [:code {:class "language-clojure"}
     (with-out-str (clojure.pprint/pprint data))
     ]])
@@ -187,12 +198,12 @@ function open_tab(id, cmp_id) {
 
 
 (defn nav [& tabs]
-  [:nav {:class "flex flex-col px-8", :aria-label "Sidebar"}
+  [:nav {:class "text-sm flex flex-col px-2", :aria-label "Sidebar"}
    (->> tabs
         (mapv (fn [[path & items]]
                 (into
                  [:li
-                  (into [:a {:href (href path) :class "whitespace-nowrap group flex gap-x-3 rounded-md py-1 px-4 text-sm/6 font-semibold text-gray-700 hover:bg-gray-50 hover:text-indigo-600"}]
+                  (into [:a {:href (href path) :class "text-xs whitespace-nowrap group flex gap-x-2 rounded-md py-1 px-2 text-sm/6 font-semibold text-gray-700 hover:bg-gray-50 hover:text-indigo-600"}]
                         items)])))
         (into [:ul {:role "list", :class "-mx-2 space-y-1"}]))])
 

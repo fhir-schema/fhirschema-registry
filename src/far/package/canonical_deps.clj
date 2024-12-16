@@ -39,9 +39,7 @@
                    [(merge {:type "additional-binding"  :path (:id el) :resource_type "ValueSet"} (parse-canonical vs))])))))
 
 (defn deps-from-binding [el]
-  (when (and (:binding el)
-             (:valueSet (:binding el))
-             (not (= "example" (get-in el [:binding :strength]))))
+  (when (and (:binding el) (:valueSet (:binding el)))
     (concat [(merge {:type "binding"  :path (:id el) :resource_type "ValueSet"} (parse-canonical (:valueSet (:binding el))))]
             (deps-from-additional-bindings el))))
 
@@ -50,11 +48,12 @@
     [(merge {:type "baseDefinition" :resource_type "StructureDefinition"} (parse-canonical (:baseDefinition res)))]))
 
 (defn dep-base [res]
-  {:definition (:url res)
+  {:definition_id (:id res)
+   :definition (:url res)
+   :definition_resource_type (:resourceType res)
    :definition_version (:version res)
    :package_name (:package_name res)
    :package_version (:package_version res)
-   :definition_id (:id res)
    :package_id (:package_id res)})
 
 (defmethod extract-deps "StructureDefinition" [res]

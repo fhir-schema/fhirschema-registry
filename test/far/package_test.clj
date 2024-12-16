@@ -17,7 +17,12 @@
   (when-not @context-atom
     (println :connect)
     (def context (system/start-system {:services ["pg" "pg.repo" "far.package"] :pg cfg}))
-    (reset! context-atom context)))
+    (reset! context-atom context))
+  (system/clear-context-cache context [])
+  (swap! (:cache context) dissoc :far.package.loader)
+  
+
+  )
 
 (comment
   (do
@@ -165,6 +170,24 @@ limit 10
      :url "http://cancer.sanger.ac.uk/cancergenome/projects/cosmic",
      :package_id #uuid "d58c1dcd-a628-50ac-94de-757eee16627e",
      :definition_id #uuid "f208c752-f76d-525c-99bb-ceb7f7448d8a"}])
+
+
+  (def vs (pg.repo/read context {:table "valueset" :match {:id "04479aa4-c6e0-5dd2-827c-f2036a35fd66"}}))
+
+  (matcho/match
+   (pg.repo/select context {:table "canonical_deps" :match {:definition_id (:id vs)}})
+   [{:package_name "hl7.fhir.r5.core",
+     :definition "http://hl7.org/fhir/ValueSet/bundle-type",
+     :dep_package_id #uuid "de285a0f-b21c-5227-82be-946deea4d3d5",
+     :dep_id #uuid "81ad69ed-11e6-529f-ba63-418d0917c634",
+     :type "vs/include-cs",
+     :package_version "5.0.0",
+     :definition_version "5.0.0",
+     :resource_type "CodeSystem",
+     :status "resolved",
+     :url "http://hl7.org/fhir/bundle-type",
+     :package_id #uuid "de285a0f-b21c-5227-82be-946deea4d3d5",
+     :definition_id (:id vs)}])
 
 
   )

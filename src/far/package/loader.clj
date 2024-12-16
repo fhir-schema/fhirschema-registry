@@ -159,10 +159,10 @@
         (print-deps-tree (:deps v) (inc (inc ident)))))))
 
 
+;;THIS is very dangerous to cache this response
 (defn get-canonical [context match]
-  (system/get-context-cache
-   context [:canonical match]
-   (fn [] (pg.repo/select context {:table "canonical" :match match}))))
+  #_(system/get-context-cache context [:canonical match] (fn [] (seq )))
+  (pg.repo/select context {:table "canonical" :match match}))
 
 (defn get-deps-idx [context package_id]
   (let [pid (if (uuid? package_id) package_id (parse-uuid package_id))]
@@ -188,6 +188,7 @@
       (assoc dep :dep_id (:id rdep) :dep_package_id (:package_id rdep) :status "resolved")
       (assoc dep :status "error"))))
 
+
 (defn load-canonical-deps [context pkgi]
   (let [pid (utils.uuid/uuid (:name pkgi) (:version pkgi))]
     (system/info context ::valueset-deps)
@@ -202,7 +203,7 @@
              (insert (resolve-dep (system/ctx-set-log-level context :error) d))))))))
 
     (system/info context ::valueset-deps)
-    (time 
+    (time
      (pg.repo/load
       context {:table "canonical_deps"}
       (fn [insert]
@@ -211,6 +212,7 @@
          (fn [sd]
            (doseq [d  (extract-deps sd)]
              (insert (resolve-dep (system/ctx-set-log-level context :error) d))))))))))
+
 
 (defn load-package*
   "load package recursively"
@@ -223,21 +225,24 @@
             pkg-bundle (read-package pkgi)
             context' (load-deps context pkg-bundle pkgi opts)
             package_version (:package_version pkg-bundle)
-            all-deps (resolve-all-deps context package_version)]
+            all-deps (resolve-all-deps context package_version)
+            pid (utils.uuid/uuid (:name package_version) (:version package_version))]
         (pg.repo/upsert context {:table "package" :resource pkgi})
         (pg.repo/insert context {:table "package_version"
-                                 :resource (assoc package_version
-                                                  :all_dependencies all-deps
-                                                  :id (utils.uuid/uuid (:name package_version) (:version package_version)))})
+                                 :resource (assoc package_version :all_dependencies all-deps :id pid)})
+        (system/info context ::load-canonicals pid)
         (load-canonicals context pkg-bundle)
+        (println :!!!! (pg/execute! context {:sql ["select count(*) from canonical where package_id = ?" pid]}))
+        (system/info context ::load-elements pid)
         (load-elements context pkg-bundle)
+        (system/info context ::load-canonical-dep pid)
         (load-canonical-deps context pkgi)
         (add-new-package context' {:package_name package-name, :package_version package-version})))))
 
 (defn load-package
   "load package recursively"
   [context package-name package-version]
-  (get-new-packages (load-package* context package-name package-version {})))
+  (get-new-packages (load-package* (system/new-context context) package-name package-version {})))
 
 
 (defn pkg-info [context package-name]

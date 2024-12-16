@@ -161,6 +161,44 @@ ORDER BY dep_name
 
   (http/request context {:path "/Package/$lookup" :query-params {:name "hl7.fhir.core"}})
 
+  (def vs (pg.repo/read context {:table "canonical" :match {:id "04479aa4-c6e0-5dd2-827c-f2036a35fd66"}}))
+
+  (def vs (pg.repo/read context {:table "valueset" :match {:id "04479aa4-c6e0-5dd2-827c-f2036a35fd66"}}))
+  (def dep (pg.repo/select context {:table "canonical_deps" :match {:definition_id "04479aa4-c6e0-5dd2-827c-f2036a35fd66"}}))
+
+  (:package_id vs)
+
+  dep
+
+  (far.package.loader/resolve-dep context dep)
+
+  (far.package/canonical-deps context vs)
+
+  (def vs (pg.repo/read context {:table "valueset" :match {:id "2029daa1-25b6-58d5-a42b-f58441b58095"}}))
+  (def dep (pg.repo/read context {:table "canonical_deps" :match {:definition_id (:id vs)}}))
+
+
+
+  (far.package.loader/get-deps-idx context (:package_id dep))
+
+  (far.package.loader/resolve-dep context dep)
+
+
+
+  (let [pid (:package_id vs)
+        vid (:id vs)]
+    (time
+     (do
+       (pg.repo/delete context {:table "canonical_deps" :match {:package_id pid :definition_id vid}})
+       (pg.repo/load
+        context {:table "canonical_deps"}
+        (fn [insert]
+          (pg.repo/fetch
+           context {:table "valueset" :match {:package_id pid :id vid}}
+           (fn [vs]
+             (doseq [d  (far.package.canonical-deps/extract-deps vs)]
+               (insert (far.package.loader/resolve-dep context d))))))))))
+
 
 
 

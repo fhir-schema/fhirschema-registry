@@ -212,10 +212,10 @@
             :columns {:id              {:type "uuid"}
                       :package_name    {:type "text" :required true}
                       :package_version {:type "text" :required true}
-                      :package_id      {:type "uuid" :required true :indexed true}
-                      :logical_id      {:type "uuid" :required true :indexed true}
-                      :canonical_id    {:type "uuid" :required true :indexed true}
-                      :canonical_url   {:type "text" :required true :indexed true}
+                      :package_id      {:type "uuid" :required true :index true}
+                      :logical_id      {:type "uuid" :required true :index true}
+                      :canonical_id    {:type "uuid" :required true :index true}
+                      :canonical_url   {:type "text" :required true :index true}
                       :canonical_version   {:type "text"}
                       :system          {:type "text" :requried true}
                       :code            {:type "text" :requried true}
@@ -264,6 +264,7 @@ group by 1,2,3,4 "})
 (comment
 
   (def context (system/start-system {:services ["pg" "pg.repo"] :pg (cheshire.core/parse-string (slurp "connection.json") keyword)}))
+  (def context far/context)
 
   (migrate context)
 
@@ -281,8 +282,8 @@ group by 1,2,3,4 "})
     (println :expand)
 
     (pg/execute! context {:sql ["update valueset set resource = jsonb_set(resource, '{processing,expand}', 'null')"]})
-    (pg.repo/truncate context {:table "valueset_expansion"})
-    (time (expand-valuesets context))
+    ;; (pg.repo/truncate context {:table "valueset_expansion"})
+    ;; (time (expand-valuesets context))
 
     (status-of-valuesets context)
     )

@@ -256,11 +256,10 @@
           :else e)))
 
 (defn build-element-binding [e]
-  (cond-> e
-    (and (:binding e) (not (= "example" (get-in e [:binding :strength]))))
+  (cond-> e (:binding e)
     (assoc :binding (select-keys (:binding e) [:strength :valueSet]))))
 
-(defn build-element-constraings [e]
+(defn build-element-constraints [e]
   (cond-> e
     (:constraint e)
     (update
@@ -314,7 +313,7 @@
       preprocess-element
       clear-element
       build-element-binding
-      build-element-constraings
+      build-element-constraints
       build-element-extension
       build-element-cardinality
       build-element-type
@@ -322,7 +321,7 @@
 
 
 (defn build-resource-header [structure-definition]
-  (-> (select-keys structure-definition [:name :type :url :version :description])
+  (-> (select-keys structure-definition [:id :name :type :url :version :description])
       (cond-> (:baseDefinition structure-definition) (assoc :base (:baseDefinition structure-definition)))
       (cond-> (:abstract structure-definition) (assoc :abstract true))
       (assoc :class

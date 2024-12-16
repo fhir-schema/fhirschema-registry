@@ -4,7 +4,6 @@
             [pg.repo]
             [cheshire.core]
             [utils.uuid]
-            [far.package.canonical-deps :refer [extract-deps]]
             [far.package.repos :as repos]
             [far.package.loader :as loader]
             [clojure.string :as str]))
