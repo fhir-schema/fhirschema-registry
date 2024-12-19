@@ -115,4 +115,51 @@
     "http://hl7.org/fhir/ValueSet/patient-contactrelationship"])
 
 
+  (def duplicates-sd
+    {:description "Record of delivery of what is supplied.",
+     :package_name "hl7.fhir.r5.core",
+     :date "2023-03-26T15:21:02+11:00",
+     :derivation "specialization",
+     :meta
+     {:file "StructureDefinition-SupplyDelivery.json",
+      :lastUpdated "2023-03-26T15:21:02.749+11:00"},
+     :publisher "Health Level Seven International (Orders and Observations)",
+     :fhirVersion "5.0.0",
+     :name "SupplyDelivery",
+     :abstract false,
+     :type "SupplyDelivery",
+     :experimental false,
+     :resourceType "StructureDefinition",
+     :package_version "5.0.0",
+     :status "draft",
+     :id #uuid "f3547414-1e4a-5277-8be1-6e52dbf64131",
+     :kind "resource",
+     :url "http://hl7.org/fhir/StructureDefinition/SupplyDelivery",
+     :package_id #uuid "de285a0f-b21c-5227-82be-946deea4d3d5",
+     :version "5.0.0",
+     :differential
+     {:element
+
+      [
+       {:path "SupplyDelivery.type",
+        :min 0,
+        :type [{:code "CodeableConcept"}],
+        :binding {:strength "required",
+                  :valueSet "http://hl7.org/fhir/ValueSet/supplydelivery-supplyitemtype|5.0.0",
+                  :extension [{:url "http://hl7.org/fhir/StructureDefinition/elementdefinition-bindingName", :valueString "SupplyDeliverySupplyItemType"}],
+         :description "The type of supply dispense."},
+        :max "1"}
+       {:path "SupplyDelivery.suppliedItem.item[x]",
+        :min 0,
+        :type [{:code "CodeableConcept"} {:code "Reference", :targetProfile ["http://hl7.org/fhir/StructureDefinition/Medication" "http://hl7.org/fhir/StructureDefinition/Substance" "http://hl7.org/fhir/StructureDefinition/Device" "http://hl7.org/fhir/StructureDefinition/BiologicallyDerivedProduct" "http://hl7.org/fhir/StructureDefinition/NutritionProduct" "http://hl7.org/fhir/StructureDefinition/InventoryItem"]}],
+        :binding {:strength "example",
+                  :valueSet "http://hl7.org/fhir/ValueSet/supplydelivery-supplyitemtype",
+                  :extension [{:url "http://hl7.org/fhir/StructureDefinition/elementdefinition-bindingName",
+                               :valueString "SupplyDeliverySupplyItemType"}]},
+        :max "1"}]},
+     :resource_id "SupplyDelivery",
+     :baseDefinition "http://hl7.org/fhir/StructureDefinition/DomainResource"})
+
+  (t/is (nil? (->> (group-by :url (sut/extract-deps duplicates-sd)) (vals) (filter (fn [[_ xs]] (> (count xs) 1))) first)))
+
   )

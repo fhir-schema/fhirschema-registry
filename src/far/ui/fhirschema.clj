@@ -50,51 +50,66 @@
                              {:href (h/href ["canonicals" (:resourceType extr) (:id extr)])} extnm]
                             [:span.text-red-500 extnm])))
                        [:span.text-gray-500 "[" (get el :min 0) "," (get el :max "*")  "]"]]]]])))
-      (->> (:elements schema)
-           (sort-by #(:index (second %)))
-           (map (fn [[k el]]
-                  [:div
-                   (when-let [s (:short el)] [:span.text-gray-500.text-xs.font-mono "// " s])
-                   [:div.flex.space-x-1.py-0.5.items-center
-                    [:span.font-mono.font-semibold.text-gray-700
-                     (name k)
-                     (when (contains? required k)
-                       [:i.fa-sharp.fa-solid.fa-asterisk.text-red-600.text-xs.relative.-top-1] )
-                     [:span.text-gray-400 ":"]]
-                    [:span.text-sky-800.flex.space-x-1.items-center.font-mono
-                     [:span.whitespace-nowrap
-                      (when-let [tp (:type el)]
-                        (if-let [tpr (:type_ref el)]
-                          [:a.px-2.rounded.hover:bg-blue-100
-                           {:href (h/href ["canonicals" (:resourceType tpr) (:id tpr)])} tp]
-                          [:span.text-red-500 tp]))
-                      (when-let [cr (:contentReference el)]
-                        (str ":" (subs cr 1)))
-                      (when (:array el)
-                        [:span.text-gray-500 "[" (get el :min 0) "," (get el :max "*")  "]"])]
-                     (when-let [b (:binding el)]
-                       (list
-                        (generic
-                         [:span.flex.space-x-1.items-baseline.inline
-                          [:span (case (:strength b) "required" "!" "extensible" "+" "preferred" "!?" "example" "?")]
-                          (let [vsu (url-to-name (:valueSet b))]
-                            (if-let [vsr (:valueSet_ref b)]
-                              [:a.px-2.rounded.hover:bg-blue-100
-                               {:href (h/href ["canonicals" (:resourceType vsr) (:id vsr)])} vsu]
-                              [:span.text-red-500 vsu]))])))
-                     (when-let [r (:refers el)]
-                       (list
-                        [:span " &lt; " (->> r (mapv (fn [x] (last (str/split (or (:profile x) (:resource x)) #"/")))) (str/join " | ")) " &gt;"]))
-                     (when-let [p (:pattern el)]
-                       (list
-                        [:span.font-mono " = " (h/code (:value p))]))
-                     ]
-                    (when-let [disc (get-in el [:slicing :discriminator])]
-                      [:span.font-mono  " ~= " (h/code disc)])]
-                   (when-let [sl (:slicing el)]
-                     [:div.pl-5.font-mono (render-slices sl)])
-                   (when (:elements el)
-                     [:div.pl-5 (render-schema el)])]))))
+      (let [elements (:elements schema)
+            choices-idx (->> elements (reduce (fn [acc [k v]] (if-let [chs (:choices v)] (assoc acc k chs) acc)) {}))
+            choices (map keyword (apply concat (vals choices-idx)))
+            elements (->> choices-idx (reduce (fn [els [k chs]]
+                                                (->> chs
+                                                     (reduce
+                                                      (fn [els ch]
+                                                        (let [chk (keyword ch)]
+                                                          (-> els
+                                                              (dissoc chk)
+                                                              (assoc-in [k :elements chk] (get els chk)))))
+                                                      els)))
+                                              elements))]
+        (println choices)
+        (->>
+         (apply dissoc elements choices)
+         (sort-by #(:index (second %)))
+         (map (fn [[k el]]
+                [:div
+                 (when-let [s (:short el)] [:span.text-gray-500.text-xs.font-mono "// " s])
+                 [:div.flex.space-x-1.py-0.5.items-center
+                  [:span.font-mono.font-semibold.text-gray-700
+                   (name k)
+                   (when (contains? required k)
+                     [:i.fa-sharp.fa-solid.fa-asterisk.text-red-600.text-xs.relative.-top-1] )
+                   [:span.text-gray-400 ":"]]
+                  [:span.text-sky-800.flex.space-x-1.items-center.font-mono
+                   [:span.whitespace-nowrap
+                    (when-let [tp (:type el)]
+                      (if-let [tpr (:type_ref el)]
+                        [:a.px-2.rounded.hover:bg-blue-100
+                         {:href (h/href ["canonicals" (:resourceType tpr) (:id tpr)])} tp]
+                        [:span.text-red-500 tp]))
+                    (when-let [cr (:contentReference el)]
+                      (str ":" (subs cr 1)))
+                    (when (:array el)
+                      [:span.text-gray-500 "[" (get el :min 0) "," (get el :max "*")  "]"])]
+                   (when-let [b (:binding el)]
+                     (list
+                      (generic
+                       [:span.flex.space-x-1.items-baseline.inline
+                        [:span (case (:strength b) "required" "!" "extensible" "+" "preferred" "!?" "example" "?")]
+                        (let [vsu (url-to-name (:valueSet b))]
+                          (if-let [vsr (:valueSet_ref b)]
+                            [:a.px-2.rounded.hover:bg-blue-100
+                             {:href (h/href ["canonicals" (:resourceType vsr) (:id vsr)])} vsu]
+                            [:span.text-red-500 vsu]))])))
+                   (when-let [r (:refers el)]
+                     (list
+                      [:span " &lt; " (->> r (mapv (fn [x] (last (str/split (or (:profile x) (:resource x)) #"/")))) (str/join " | ")) " &gt;"]))
+                   (when-let [p (:pattern el)]
+                     (list
+                      [:span.font-mono " = " (h/code (:value p))]))
+                   ]
+                  (when-let [disc (get-in el [:slicing :discriminator])]
+                    [:span.font-mono  " ~= " (h/code disc)])]
+                 (when-let [sl (:slicing el)]
+                   [:div.pl-5.font-mono (render-slices sl)])
+                 (when (:elements el)
+                   [:div.pl-5 (render-schema el)])])))))
      (into [:div.text-sm]))))
 
 (defn sd-type [{d :derivation t :type k :kind}]

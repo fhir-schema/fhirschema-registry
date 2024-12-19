@@ -213,7 +213,9 @@
         fs-prefix (last (str/split prefix #"\."))]
     (->> (:type e)
          (mapv (fn [{c :code :as tp}]
-                 (assoc e :path (str prefix (capitalize c)) :type [tp] :choiceOf fs-prefix)))
+                 (-> e
+                     (dissoc :binding)
+                     (assoc :path (str prefix (capitalize c)) :type [tp] :choiceOf fs-prefix))))
          (into [(-> (assoc e :path prefix)
                     (dissoc :type)
                     (assoc :choices (->> (:type e) (mapv (fn [{c :code}] (str fs-prefix (capitalize c)))))))]))))

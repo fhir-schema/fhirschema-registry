@@ -20,7 +20,8 @@
 
 (defn elipse [txt & [cnt]]
   (when txt
-    (subs txt 0 (min (count txt) (or cnt 70)))))
+    [:span.hover:bg-yellow-100 {:title txt}
+     (subs txt 0 (min (count txt) (or cnt 70))) "..."]))
 
 (defn render-packages [pkgs]
   (->> pkgs
@@ -87,14 +88,15 @@ order by 1
   (let [pkg (pg.repo/read context {:table "package_version" :match {:id pkg-id}})
         prefix ["packages" pkg-id]
         stats (pg/execute! context {:sql [canonicals-stats-sql pkg-id]})]
-    [:div.text-xs.px-2
-     [:div.px-2.py-2.border-b.border-gray-400  (str (:name pkg) "@" (:version pkg))]
+    [:div.text-xs.px-2 {:style "width: 20em; max-width: 20em;"}
+     [:a.px-2.py-2.bg-sky-100.rounded-md.border.my-2.block  {:href (h/href ["packages" pkg-id])}
+      (str (:name pkg) "@" (:version pkg))]
      [:div.py-2
       (->> stats
            (mapv (fn [{rt :resource_type cnt :count}]
                    [(into prefix [rt])
-                    [:span rt]
-                    [:span {:class "ml-auto w-9 min-w-max rounded-full bg-white px-1.5 py-0.5 text-center text-xs font-medium whitespace-nowrap text-gray-600 ring-1 ring-gray-200 ring-inset", :aria-hidden "true"} 
+                    [:span.text-xs rt]
+                    [:span {:class "ml-auto w-9 min-w-max rounded-full bg-white px-1.5 py-0.5 text-center text-xs font-medium whitespace-nowrap text-gray-500 ring-1 ring-gray-200 ring-inset", :aria-hidden "true"} 
                      (str cnt)]
                     ]))
            (apply h/nav))]]))
@@ -151,15 +153,27 @@ order by 1
 (defn cn-nav [context pkg-id rt]
   (let [cns (->> (pg.repo/select context {:table "canonical" :match {:package_id pkg-id :resource_type rt}})
                  (sort-by (fn [c] (last (str/split (or (:url c) (:name c) ) #"/")))))]
-    [:div.border-r.text-xs {:style "width: 18em; max-width: 18em; height: 100vh; overflow-y: auto;"}
-     [:div.bg-gray-200.px-4.py-2.bordre-b rt]
-     (->> cns
-          (map (fn [c]
-                 [:a.block.text-sky-700.py-1.hover:bg-blue-100.px-4
-                  {:href (h/href ["canonicals" (:resource_type c) (:id c)])
-                   :hx-push-url "true"
-                   :hx-get (h/href ["canonicals" (:resource_type c) (:id c)]) :hx-target "#content"}
-                  (last (str/split (or (:url c) (:name c) ) #"/"))])))]))
+    [:div.text-xs.p-2 {:style "width: 20em; max-width: 20em; height: 100vh; overflow-y: auto;"}
+     #_[:div.px-4.py-2.border-b.font-semibold.text-gray-500 rt]
+     [:div [:input.bg-gray-100.my-1.px-2.py-1.border.block.w-full {:placeholder "Search..." :onkeyup "filterByClass('cn-item', event)"} ]]
+     [:div.px-2
+      (->> cns
+           (map (fn [c]
+                  (h/nav-link
+                   {:class "cn-item"
+                    :href (h/href ["canonicals" (:resource_type c) (:id c)])
+                    :hx-push-url "true"
+                    :hx-get (h/href ["canonicals" (:resource_type c) (:id c)]) :hx-target "#content"}
+                   (last (str/split (or (:url c) (:name c) ) #"/"))))))]]))
+
+(defn canonical-other-versions-tab [context cn]
+  (let [other-versions (pg.repo/select context {:table "canonical" :match {:url (:url cn) :resource_type (:resourceType cn)}})]
+    [(str "Other versions (" (count other-versions) ")")
+     (h/table [:pacakge :canonical :version] other-versions (fn [c]
+                                  [(str (:package_name c) "@" (:package_version c))
+                                   (h/link ["canonicals" "CodeSystem" (:id c)] (:url c))
+                                   (:version c)]
+                                  ))]))
 
 (defmulti render-canonical (fn [_context cn] (:resourceType cn)))
 
@@ -173,25 +187,26 @@ order by 1
      ["Valueset"  (h/formats-block cn)]
      (canonical-deps-tab context cn)
      (canonical-dependant-tab context cn)
+     (canonical-other-versions-tab context cn)
      ["Expansion"  (h/table [:system :code :display] expansion)]
      ["Expansion SQL"  (h/edn-block expand-sql)])))
 
 
 (defmethod render-canonical "CodeSystem"
   [context cn]
-  (let [concepts (far.tx/codesystem-concepts context cn)
+  (let [concepts (->> (far.tx/codesystem-concepts context cn)
+                      (sort-by (fn [c] (or (get-in c [:resource :is-a]) [(:code c)]))))
         other-versions (pg.repo/select context {:table "canonical" :match {:url (:url cn) :resource_type "CodeSystem"}})]
     (h/tabbed-content
      ["Concepts"
       (h/table [:code :display :defnition :keys] concepts
-               (fn [c] [(:code c) (:display c) (get-in c [:resource :definition]) (str/join ", " (mapv name (keys (dissoc (:resource c) :definition))))]))]
-     ["Defnition" (h/yaml-block (dissoc cn :concept))]
+               (fn [c] [(:code c) (:display c)
+                       (elipse (get-in c [:resource :definition]) 40)
+                       (str/join ", " (mapv name (keys (dissoc (:resource c) :definition))))]))]
+     ["Defnition" (h/yaml-block cn)]
      (canonical-deps-tab context cn)
      (canonical-dependant-tab context cn)
-     ["Other versions" (h/table [] other-versions (fn [c]
-                                                    [(str (:package_name c) "@" (:package_version c))
-                                                     (h/link ["canonicals" "CodeSystem" (:id c)] (:url c))]
-                                                    ))])))
+     (canonical-other-versions-tab context cn))))
 
 (defmethod render-canonical "StructureDefinition"
   [context cn]
@@ -203,14 +218,16 @@ order by 1
      ["Schema*" (h/formats-block schema*)]
      ["StructureDefinition" (h/formats-block cn)]
      (canonical-deps-tab context cn)
-     (canonical-dependant-tab context cn))))
+     (canonical-dependant-tab context cn)
+     (canonical-other-versions-tab context cn))))
 
 (defmethod render-canonical :default
   [context cn]
   (h/tabbed-content
    ["Resource" (h/formats-block cn)]
    (canonical-deps-tab context cn)
-   (canonical-dependant-tab context cn)))
+   (canonical-dependant-tab context cn)
+   (canonical-other-versions-tab context cn)))
 
 (defn cn-content [context cn]
   [:div.px-4
@@ -227,12 +244,23 @@ order by 1
       :navigation #(cn-nav context (:package_id cn) (:resourceType cn))
       :content    #(cn-content context cn)})))
 
+(defmulti render-canonicals-stats (fn [context pkg-id rt] rt))
+
+(defmethod render-canonicals-stats
+  :default
+  [context pkg-id rt]
+  (let [cnt (pg/execute! context {:dsql {:select {:count [:pg/sql "count(*)"]}
+                                         :from (keyword (str/lower-case (name rt)))
+                                         :where [:= :package_id [:pg/param pkg-id]]}})]
+    [:div.p-4
+     [:div.text-xl.text-bold (:count (first cnt))]]))
+
 (defn canonicals-html [context {{rt :resource_type id :id} :route-params :as request}]
   (h/layout
    context request
    {:topnav (fn [] (canonicals-tabs context id))
     :navigation #(cn-nav context id rt)
-    :content    (fn [] [:div "TODO"])}))
+    :content    (render-canonicals-stats context id rt)}))
 
 
 
@@ -265,14 +293,6 @@ order by 1
   (http/register-endpoint context {:method :get :path "/packages" :fn #'packages-html})
   (http/register-endpoint context {:method :get :path "/packages/search" :fn #'packages-search-html})
   (http/register-endpoint context {:method :get :path "/packages/:id" :fn #'package-html})
-
-  ;; (http/register-endpoint context {:method :get :path "/canonicals/ValueSet/:id" :fn #'valueset-html})
-  ;; (http/register-endpoint context {:method :get :path "/canonicals/CodeSystem/:id" :fn #'codesystem-html})
-  ;; (http/register-endpoint context {:method :get :path "/canonicals/StructureDefinition/:id" :fn #'structuredef-html})
-
-  ;; (http/register-endpoint context {:method :get :path "/packages/:id/ValueSet" :fn #'valuesets-html})
-  ;; (http/register-endpoint context {:method :get :path "/packages/:id/CodeSystem" :fn #'codesystems-html})
-  ;; (http/register-endpoint context {:method :get :path "/packages/:id/StructureDefinition" :fn #'structuredefs-html})
 
   (http/register-endpoint context {:method :get :path "/packages/:id/:resource_type" :fn #'canonicals-html})
   (http/register-endpoint context {:method :get :path "/canonicals/:resource_type/:id" :fn #'canonical-html})

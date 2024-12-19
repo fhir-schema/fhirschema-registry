@@ -63,6 +63,9 @@
          (concat (basedef-deps res))
          (map (fn [dep] (merge base dep)))
          (map #(dissoc % :path))
+         (group-by (fn [x] (select-keys x [:definition_id :type :url])))
+         (vals)
+         (map (fn [xs] (first xs)))
          (into #{}))))
 
 (defn extract-compose [base type xs]

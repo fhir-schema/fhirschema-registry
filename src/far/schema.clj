@@ -39,6 +39,15 @@
                                                                                              (println :missed (:url v) (keys deps-idx))))
 
                                                                           ))) {})))
+    (get-in schema [:slicing :slices])
+    (assoc-in [:slicing :slices]
+              (->> (get-in schema [:slicing :slices])
+                     (reduce (fn [acc [k v]]
+                               (assoc acc k
+                                      (if-let [sch (:schema v)]
+                                        (assoc v :schema (enrich-node sch deps-idx))
+                                        v)))
+                             {})))
 
     (:elements schema) (assoc :elements (->> (:elements schema)
                                              (reduce (fn [acc [k v]] (assoc acc k (enrich-node v deps-idx))) {})))))

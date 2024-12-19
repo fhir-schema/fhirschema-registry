@@ -13,12 +13,12 @@
 var  tabs = {};
 function open_tab(id, cmp_id) {
   var cur = tabs[cmp_id];
-  console.log('open-tab', id,cur)
+  //console.log('open-tab', id,cur)
   if( cur == id) { return; }
   var new_tab = document.getElementById(id);
   new_tab.style.display = 'block';
   var new_tab_node = document.getElementById('tab-' + id);
-  console.log('?', 'tab-' + id, new_tab_node);
+  //console.log('?', 'tab-' + id, new_tab_node);
   new_tab_node.classList.add('border-sky-500');
   new_tab_node.classList.remove('border-transparent');
   var old_tab = document.getElementById(cur);
@@ -28,12 +28,24 @@ function open_tab(id, cmp_id) {
   old_tab_node.classList.add('border-transparent');
   tabs[cmp_id] = id;
 }
+
+function filterByClass(cls, event) {
+    const searchTerm = event.target.value.trim().toLowerCase();
+    const searchable = document.getElementsByClassName(cls);
+    Array.from(searchable).forEach(element => {
+        element.style.display = 'block';
+    });
+    Array.from(searchable).forEach(element => {
+        const hasMatch = element.textContent.toLowerCase().indexOf(searchTerm) >= 0
+        element.style.display = hasMatch ? 'block' : 'none';
+    });
+}
 "
 
   )
 
 (defn top-nav []
-  [:nav {:class "bg-gray-800"}
+  [:nav.border-b
    [:div {:class "px-2 sm:px-4 lg:px-4"}
     [:div {:class "relative flex h-12 items-center justify-between"}
      [:div {:class "flex flex-1 items-center justify-center sm:items-stretch sm:justify-start"}
@@ -41,8 +53,8 @@ function open_tab(id, cmp_id) {
        [:img {:class "h-8 w-auto", :src "https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500", :alt "Your Company"}]]
       [:div {:class "hidden sm:ml-6 sm:block"}
        [:div {:class "flex space-x-4"}
-        [:a {:href "/packages",   :class "rounded-md px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white", :aria-current "page"} "Packages"]
-        [:a {:href "/canonicals", :class "rounded-md px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-700 hover:text-white"} "Canonicals"]]]]]]])
+        [:a {:href "/packages",   :class "rounded-md px-3 py-2 text-sm font-medium text-sky-700 hover:bg-gray-700 hover:text-white", :aria-current "page"} "Packages"]
+        [:a {:href "/canonicals", :class "rounded-md px-3 py-2 text-sm font-medium text-sky-700 hover:bg-gray-700 hover:text-white"} "Canonicals"]]]]]]])
 
 
 (defn hx-target [request]
@@ -66,9 +78,9 @@ function open_tab(id, cmp_id) {
 
              [:body {:hx-boost "true"}
               body
-              [:script "hljs.highlightAll();"]]]))})
+              #_[:script "hljs.highlightAll();"]]]))})
 
-(defn layout [context request fragments-map]
+(defn layout [_context request fragments-map]
   (if-let [trg (hx-target request)]
     (if-let [trg-fn (get fragments-map (keyword trg))]
       {:status 200 :body (hiccup.core/html (trg-fn))}
@@ -78,9 +90,9 @@ function open_tab(id, cmp_id) {
      [:div (top-nav)
       [:div.flex
        (when-let [tnav (:topnav fragments-map)]
-         [:div#topnav.bg-gray-200.border-r (if (fn? tnav) (tnav) tnav)])
+         [:div#topnav.border-r (if (fn? tnav) (tnav) tnav)])
        (when-let [nav (:navigation fragments-map)]
-         [:div#nav.bg-gray-100.border-r (if (fn? nav) (nav) nav)])
+         [:div#nav.border-r (if (fn? nav) (nav) nav)])
        (when-let [cnt (:content fragments-map)]
          [:div#content.flex-1 (if (fn? cnt) (cnt) cnt)])]])))
 
@@ -140,20 +152,21 @@ function open_tab(id, cmp_id) {
         (bc-li bc-delim (bc-link url nm)))))
    (bc-container)))
 
+(defn code-block [lang data]
+  (let [id (str (gensym))]
+    [:pre.p-2.text-xs.bg-gray-100
+     [:code {:id id :class (str "language-" (name lang))} data]
+     [:script (str "hljs.highlightElement(window.document.getElementById('" id "'))")]]))
+
+;; HERE
 (defn yaml-block [data]
-  [:pre.p-2.text-xs.bg-gray-100
-   [:code {:class "language-yaml"} (clj-yaml.core/generate-string data)]])
+  (code-block :yaml (clj-yaml.core/generate-string data)))
 
 (defn json-block [data]
-  [:pre.p-2.text-xs.bg-gray-100
-   [:code {:class "language-json"}
-    (cheshire.core/generate-string data {:pretty true})]])
+  (code-block :json (cheshire.core/generate-string data {:pretty true})))
 
 (defn edn-block [data]
-  [:pre.p-2.text-xs.bg-gray-100
-   [:code {:class "language-clojure"}
-    (with-out-str (clojure.pprint/pprint data))
-    ]])
+  (code-block :clojure (with-out-str (clojure.pprint/pprint data))))
 
 
 (defn link [path title]
@@ -196,15 +209,15 @@ function open_tab(id, cmp_id) {
                         items)))
           (into [:nav {:class "-mb-px flex space-x-8", :aria-label "Tabs"}]))]]])
 
+(defn nav-link [opts & items]
+  (into [:a (assoc opts :class (str (:class opts) " nav-link text-xs group flex gap-x-2 rounded-md py-1 px-2 text-gray-700 hover:bg-gray-50 hover:text-indigo-600"))]
+        items))
 
 (defn nav [& tabs]
   [:nav {:class "text-sm flex flex-col px-2", :aria-label "Sidebar"}
    (->> tabs
         (mapv (fn [[path & items]]
-                (into
-                 [:li
-                  (into [:a {:href (href path) :class "text-xs whitespace-nowrap group flex gap-x-2 rounded-md py-1 px-2 text-sm/6 font-semibold text-gray-700 hover:bg-gray-50 hover:text-indigo-600"}]
-                        items)])))
+                (into [:li (apply nav-link {:href (href path)} items)])))
         (into [:ul {:role "list", :class "-mx-2 space-y-1"}]))])
 
 
