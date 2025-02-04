@@ -1,15 +1,31 @@
 (ns far-cli
   (:require
-   [system]
+   [clojure.tools.cli :as cli]
    [far.package]
    [fhir.schema.transpiler]
-   [fhir.schema.typeschema]))
+   [fhir.schema.typeschema]
+   [system])
+  (:gen-class))
 
 
 (system/defmanifest
   {:description "create tables and save packages into this tables"
    :deps ["far-cli"]})
 
+
+(def cli-options
+  [["-h" "--help"]])
+
+
+(defn -main [& args]
+  (let [{options :options
+         summary :summary
+         [command :as _arguments] :arguments
+         :as opts} (cli/parse-opts args cli-options)]
+    (prn opts)
+    (cond
+      (:help options) (println summary)
+      :else (println "Hello, World!"))))
 
 (defn to-type-schema [schema]
 

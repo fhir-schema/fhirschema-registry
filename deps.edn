@@ -34,6 +34,10 @@
 
    :main-opts   ["-m" "nrepl.cmdline" "-b" "0.0.0.0" "--middleware" "[cider.nrepl/cider-middleware]"]}
 
+  :far-cli
+  {:main-opts   ["-m" "far-cli"]
+   :extra-deps  {org.slf4j/slf4j-nop {:mvn/version "1.7.36"}}}
+
   :kaocha
   {:extra-deps {lambdaisland/kaocha {:mvn/version "1.77.1236"}}
    :extra-paths ["test"]
