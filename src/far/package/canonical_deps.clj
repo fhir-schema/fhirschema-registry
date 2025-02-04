@@ -40,7 +40,10 @@
 
 (defn deps-from-binding [el]
   (when (and (:binding el) (:valueSet (:binding el)))
-    (concat [(merge {:type "binding"  :path (:id el) :resource_type "ValueSet"} (parse-canonical (:valueSet (:binding el))))]
+    (concat [(merge {:type "binding"  :path (:id el)
+                     :resource_type "ValueSet"
+                     :binding_strength (:strength (:binding el))}
+                    (parse-canonical (:valueSet (:binding el))))]
             (deps-from-additional-bindings el))))
 
 (defn basedef-deps [res]
@@ -66,6 +69,7 @@
          (group-by (fn [x] (select-keys x [:definition_id :type :url])))
          (vals)
          (map (fn [xs] (first xs)))
+         (remove (fn [x] (str/starts-with? (:url x) "http://hl7.org/fhirpath")))
          (into #{}))))
 
 (defn extract-compose [base type xs]

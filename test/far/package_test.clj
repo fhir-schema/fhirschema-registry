@@ -20,8 +20,6 @@
     (reset! context-atom context))
   (system/clear-context-cache context [])
   (swap! (:cache context) dissoc :far.package.loader)
-  
-
   )
 
 (comment
@@ -40,11 +38,23 @@
 
   (def pkgi (far.package/pkg-info context "hl7.fhir.r4.core"))
 
-  (def pkg-bundle (far.package/package-bundle pkgi))
+  (far.package/pkg-info context "hl7.fhir.uv.ips@2.0.0-ballot")
+
+  (far.package/pkg-info context "hl7.fhir.us.mcode@4.0.0-ballot")
+
+
+  (def pkg-bundle (far.package/package-bundle context pkgi))
 
   (def pkgi-r5 (far.package/pkg-info context "hl7.fhir.r5.core"))
 
-  (def pkg-r5-bundle (far.package/package-bundle pkgi-r5))
+  (def pkg-r5-bundle (far.package/package-bundle context pkgi-r5))
+
+  (keys pkg-r5-bundle)
+  (:package pkg-r5-bundle)
+
+  (matcho/match
+   (:package_version pkg-r5-bundle)
+   {:dependencies {}})
 
   (into #{} (mapv :kind (:files (:index pkg-r5-bundle))))
 
@@ -65,11 +75,25 @@
 
   (def pkgi (far.package/pkg-info context "hl7.fhir.us.mcode"))
 
+  (far.package/pkg-info context "ups")
+
   ;; load-package "hl7.fhir.us.mcode" "4.0.0-ballot" -> return the package
   ;; package "name" & "version"
 
   (def test-pkg-name "hl7.fhir.us.mcode")
   (def test-pkg-version "4.0.0-ballot")
+
+  (far.package/load-package context "hl7.fhir.uv.ips" "2.0.0-ballot")
+  (far.package/load-package context "hl7.fhir.ca.baseline" "1.1.8")
+  (far.package/load-package context "hl7.fhir.au.base" "4.1.0")
+
+  (far.package/load-package context "us.nlm.vsac" "0.17.0")
+
+  (far.package/pkg-info context "hl7.fhir.r4.core")
+  (far.package/pkg-info context "hl7.terminology.r4")
+
+  (pg.repo/select context {:table "CodeSystem" :limit 10})
+
 
   ;; TODO: add check that package exists
   (def new-packages (far.package/load-package context test-pkg-name test-pkg-version))
@@ -126,15 +150,15 @@ from package_version
 
   (pg.repo/read context {:table "package" :match {:name "hl7.fhir.us.core"}})
 
-  (far.package/package-deps context pkv)
+  ;; (far.package/package-deps context pkv)
 
-  (far.package/package-deps-print context pkv)
+  ;; (far.package/package-deps-print context pkv)
 
   (def mcode (far.package/package-by-name context "hl7.fhir.us.mcode"))
 
-  (far.package/package-deps context mcode)
+  ;; (far.package/package-deps context mcode)
 
-  (far.package/package-deps-print context mcode)
+  ;; (far.package/package-deps-print context mcode)
 
   (pg.repo/select context {:table  "structuredefinition" :limit 10})
   (pg/execute! context {:sql "select url, id, package_id from structuredefinition limit 10"})
@@ -190,6 +214,7 @@ limit 10
      :definition_id (:id vs)}])
 
 
+
   )
 
 
@@ -204,11 +229,185 @@ limit 10
 
   ;; TODO: (canonical all-deps)
   ;; TODO: visualize deps
+
+  ;; Meta core
+
+  far.package.repos/canonicals
+
+  (def meta-core
+    (pg/execute! context {:dsql {:select {:id :id :url :url :name [:resource#>> [:name]]}
+                                 :from :structuredefinition
+                                 :where [:and
+                                         [:in [:pg/sql "lower(resource#>>'{name}')"] [:pg/params-list far.package.repos/core-canonicals]]
+                                         [:= :package_id "de285a0f-b21c-5227-82be-946deea4d3d5"]]}}))
+
+
+  (def meta-core-deps
+    (->> (pg/execute! context {:dsql {:select [:pg/sql "distinct url, type, dep_id, dep_package_id"]
+                                      :from :canonical_deps
+                                      :order-by :url
+                                      :where [:and [:in :definition_id [:pg/params-list (mapv :id meta-core)]]
+                                              [:<> :type "binding"]
+                                              ]}})))
+
+
+
+  (->> meta-core-deps (mapv :url))
+
+  (def meta-core-deps-deps
+    (->> (pg/execute! context {:dsql {:select [:pg/sql "distinct url, type, dep_id, dep_package_id"]
+                                      :from :canonical_deps
+                                      :order-by :url
+                                      :where [:and
+                                              [:in :definition_id [:pg/params-list (mapv :dep_id meta-core-deps)]]
+                                              [:not [:in :definition_id [:pg/params-list (mapv :dep_id meta-core)]]]
+                                              [:<> :type "binding"]]}})))
+
+  (->> meta-core
+       (mapv (fn [x] [(:id x) (:url x)])))
+
+  (let [pkg-id "454f267d-ea0f-5a07-927c-09a7b56ff302"
+        pkg-id "de285a0f-b21c-5227-82be-946deea4d3d5"]
+    (->> (pg/execute! context {:dsql {:select [:pg/sql "distinct type, url"]
+                                      :from :canonical_deps
+                                      :order-by [:pg/list :type :url]
+                                      :where [:and
+                                              [:or [:not [:= :dep_package_id pkg-id]]
+                                               [:not [:= :local true]]
+                                               [:is :dep_package_id nil]]
+                                              [:= :package_id pkg-id]]}})
+         (mapv (fn [x] (str/join " " [(:type x) (:url x)])))))
+
+
+  (def root-cn
+    ["http://hl7.org/fhir/StructureDefinition/StructureDefinition"
+     "http://hl7.org/fhir/StructureDefinition/ValueSet"
+     "http://hl7.org/fhir/StructureDefinition/ElementDefinition"
+     "http://hl7.org/fhir/StructureDefinition/CodeSystem"
+     ])
+
+  (def first-layer
+    (->> (pg.repo/select context {:table "canonical_deps"
+                                  :where [:and
+                                          [:in :definition [:pg/params-list root-cn]]
+                                          [:<> :type "reference"]
+                                          [:or [:is :binding_strength nil] [:<> :binding_strength "example"]]
+                                          [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+         (mapv :url)
+         (into #{})))
+
+  (sort (concat root-cn first-layer))
+
+  (def second-layer
+    (->> (pg.repo/select context {:table "canonical_deps"
+                                  :where [:and
+                                          [:in :definition [:pg/params-list first-layer]]
+                                          [:<> :type "reference"]
+                                          [:or [:is :binding_strength nil] [:<> :binding_strength "example"]]
+                                          [:not [:in :definition [:pg/params-list root-cn]]]
+                                          [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+         (mapv :url)
+         (into #{})))
+
+  (def third-layer
+    (->> (pg.repo/select context {:table "canonical_deps"
+                                  :where [:and
+                                          [:in :definition [:pg/params-list second-layer]]
+                                          [:not [:in :definition [:pg/params-list (concat root-cn first-layer)]]]
+                                          [:or [:is :binding_strength nil] [:<> :binding_strength "example"]]
+                                          [:<> :type "reference"]
+                                          [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+         (mapv :url)
+         (into #{})))
+
+  (def fifth-layer
+    (->> (pg.repo/select context {:table "canonical_deps"
+                                  :where [:and
+                                          [:in :definition [:pg/params-list third-layer]]
+                                          [:not [:in :definition [:pg/params-list (concat root-cn first-layer second-layer)]]]
+                                          [:<> :type "reference"]
+                                          [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+         (mapv :url)
+         (into #{})))
+
+  (def six-layer
+    (->> (pg.repo/select context {:table "canonical_deps"
+                                  :where [:and
+                                          [:in :definition [:pg/params-list fifth-layer]]
+                                          [:not [:in :definition [:pg/params-list (concat root-cn first-layer second-layer third-layer)]]]
+                                          [:<> :type "reference"]
+                                          [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+         (mapv :url)))
+
+  (def seven-layer
+    (->> (pg.repo/select context {:table "canonical_deps"
+                                  :where [:and
+                                          [:in :definition [:pg/params-list six-layer]]
+                                          [:not [:in :definition [:pg/params-list (concat root-cn first-layer second-layer third-layer
+                                                                                          fifth-layer
+                                                                                          )]]]
+                                          [:<> :type "reference"]
+                                          [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+         (mapv :url)))
+
+  (->> 
+   (concat root-cn first-layer second-layer third-layer fifth-layer six-layer)
+   (into #{})
+   sort)
+
+  (->> (pg.repo/select context {:table "canonical_deps"
+                                :where [:and
+                                        [:in :definition [:pg/params-list six-layer]]
+                                        [:not [:in :definition [:pg/params-list (concat root-cn first-layer second-layer third-layer
+                                                                                        fifth-layer
+                                                                                        )]]]
+                                        [:<> :type "reference"]
+                                        [:= :package_id "d58c1dcd-a628-50ac-94de-757eee16627e"]]})
+       (mapv :url))
+
+  (count first-layer)
+  (count second-layer)
+  (count third-layer)
+
+
+  (pg/execute! context {:dsql {:select [:pg/sql "id, url"]
+                               :from :canonical
+                               :where [:= :package_id
+                                       "d58c1dcd-a628-50ac-94de-757eee16627e"
+                                       ]}})
+
+  (pg/execute! context {:dsql {:select :*
+                               :from :package_dependency
+                               :where [:= :package_id "454f267d-ea0f-5a07-927c-09a7b56ff302"]}})
+
+  ;; dep
+
   )
 
 
 
 
 
+(comment
 
+  (def pkg-r5-bundle (far.package/package-bundle context pkgi-r5))
+
+  (keys pkg-r5-bundle)
+
+  (->> (get pkg-r5-bundle "structuredefinition")
+       (keys)
+       (sort)
+       )
+
+  (far.package/pkg-info context "hl7.fhir.r4.core")
+
+  (def pt-sd (get-in pkg-r5-bundle ["structuredefinition" "http://hl7.org/fhir/StructureDefinition/Patient"]))
+
+  (:version pt-sd)
+
+  (fhir.schema.transpiler/translate (get-in pkg-r5-bundle ["structuredefinition" "http://hl7.org/fhir/StructureDefinition/Patient"]))
+
+
+
+  )
 

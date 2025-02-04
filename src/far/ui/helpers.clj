@@ -53,12 +53,17 @@ function filterByClass(cls, event) {
        [:img {:class "h-8 w-auto", :src "https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500", :alt "Your Company"}]]
       [:div {:class "hidden sm:ml-6 sm:block"}
        [:div {:class "flex space-x-4"}
-        [:a {:href "/packages",   :class "rounded-md px-3 py-2 text-sm font-medium text-sky-700 hover:bg-gray-700 hover:text-white", :aria-current "page"} "Packages"]
-        [:a {:href "/canonicals", :class "rounded-md px-3 py-2 text-sm font-medium text-sky-700 hover:bg-gray-700 hover:text-white"} "Canonicals"]]]]]]])
+        [:a {:href "/packages",   :class "rounded-md px-3 py-2 text-sm font-medium text-sky-700 hover:bg-gray-100", :aria-current "page"} "Packages"]
+        [:a {:href "/canonicals", :class "rounded-md px-3 py-2 text-sm font-medium text-sky-700 hover:bg-gray-100"} "Canonicals"]]]]]]])
 
 
 (defn hx-target [request]
   (get-in request [:headers "hx-target"]))
+
+(defn html-response [body]
+  {:status 200
+   :headers {"content-type" "text/html"}
+   :body (hiccup.core/html body)})
 
 (defn hiccup-response [request body]
   {:status 200
@@ -170,7 +175,7 @@ function filterByClass(cls, event) {
 
 
 (defn link [path title]
-  [:a.text-sky-600 {:href (str "/" (str/join "/" path))} title])
+  [:a.text-sky-600.flex.space-x-1.items-center {:href (str "/" (str/join "/" path))} title])
 
 (defn h1 [& body]
   (into [:h1.text-xl.my-3.flex.items-baseline.space-x-4] body))
@@ -179,16 +184,18 @@ function filterByClass(cls, event) {
   (into [:h1.text-lg.my-3.flex.items-baseline.space-x-4] body))
 
 (defn search-input [{p :path ph :placeholder}]
-  [:div.flex.space-x-4.items-center
-   [:i.fa-duotone.fa-regular.fa-magnifying-glass.text-gray-500]
+  [:div {:class "mt-2 grid grid-cols-1"}
    [:input
-    {:class "col-start-1 row-start-1 block w-full rounded-md bg-white py-1.5 pl-10 pr-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:pl-9 sm:text-sm/6"
+    {:class "border col-start-1 row-start-1 block w-full rounded-md bg-white py-1.5 pr-3 pl-10 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:pl-9 sm:text-sm/6"
      :type "search", :name "search",
      :placeholder (or ph "Search..")
      :hx-get (str "/" (str/join "/" p))
      :hx-trigger "input changed delay:500ms, search",
      :hx-target "#search-results",
-     :hx-indicator ".htmx-indicator"}]])
+     :hx-indicator ".htmx-indicator"}]
+   [:i.fa-duotone.fa-regular.fa-magnifying-glass.text-gray-500
+    {:class "pointer-events-none col-start-1 row-start-1 ml-3 size-5 self-center text-gray-400 sm:size-4"}]
+   ])
 
 (defn tabs [& tabs]
   [:div

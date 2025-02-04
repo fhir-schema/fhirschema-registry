@@ -18,9 +18,9 @@
 (defn pkg-info [context package-name]
   (loader/pkg-info context package-name))
 
-(defn package-bundle [pkgi]
+(defn package-bundle [context pkgi]
   (assert (and (map? pkgi) (:name pkgi)))
-  (loader/read-package pkgi))
+  (loader/read-package context pkgi))
 
 (defn truncate [context]
   (repos/truncate context))

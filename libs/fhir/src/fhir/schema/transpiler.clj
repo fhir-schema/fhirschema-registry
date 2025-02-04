@@ -254,7 +254,7 @@
     (cond (= tp "Reference")
           (let [refers (build-refers (:type e))]
             (cond-> (assoc e :type [{:code "Reference"}])
-              (seq refers) (assoc :refers refers)))
+              (seq refers) (assoc :refers (into #{} refers))))
           :else e)))
 
 (defn build-element-binding [e]
@@ -323,7 +323,7 @@
 
 
 (defn build-resource-header [structure-definition]
-  (-> (select-keys structure-definition [:id :name :type :url :version :description])
+  (-> (select-keys structure-definition [:id :name :type :url :version :description :package_name :package_version :package_id :kind :derivation])
       (cond-> (:baseDefinition structure-definition) (assoc :base (:baseDefinition structure-definition)))
       (cond-> (:abstract structure-definition) (assoc :abstract true))
       (assoc :class

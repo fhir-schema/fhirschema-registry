@@ -11,6 +11,7 @@
    [far.tx]
    [far.schema]
    [cheshire.core]
+   [matcho.core]
    [fhir.schema.transpiler]))
 
 (system/defmanifest {:description "UI for far"})
@@ -32,12 +33,15 @@
                [:span.text-sm.text-gray-400 (elipse (:description p))]]))
        (into [:div#search-results])))
 
+(defn canonical-name [url]
+  (last (str/split (or url "???") #"/")))
+
 (defn canonical-breadcrump [context cn]
   (let [rt (or (:resource_type cn) (:resourceType cn))]
     (h/breadcramp "packages" "packages" (:package_id cn) (:package_name cn) rt rt "#" (:name cn))))
 
 (defn canonical-dependant-tab [context cn]
-  (let [dependant (pg.repo/select context {:table "canonical_deps" :match {:dep_id (:id cn)}})]
+  (let [dependant (pg.repo/select context {:table "canonical_deps" :match {:url (:url cn)}})]
     [(str "Dependant (" (count dependant) ")")
      (h/table
       [:package :resource] dependant
@@ -57,12 +61,14 @@
 
 (defn packages-html [context request]
   (let [pkgs (pg.repo/select context {:table "package_version" :order-by [:pg/desc :name :version]})]
-    (h/hiccup-response request 
-     [:div.px-4
-      [:br]
-      (h/search-input {:path ["packages" "search"]})
-      [:br]
-      (render-packages pkgs)])))
+    (h/layout
+     context request
+     {:content
+      [:div.px-4
+       [:br]
+       (h/search-input {:path ["packages" "search"]})
+       [:br]
+       (render-packages pkgs)]})))
 
 (defn packages-search-html [context {{q :search} :query-params :as request}]
   (let [pkgs (pg.repo/select context {:table "package_version"
@@ -84,13 +90,23 @@ group by 1
 order by 1
 ")
 
+(defn broken-deps-count [context pkg-id]
+  (-> (pg/execute! context {:sql ["select count(*) as count from canonical_deps where package_id = ? and local is null" pkg-id]})
+      first
+      :count))
+
 (defn canonicals-tabs [context pkg-id]
   (let [pkg (pg.repo/read context {:table "package_version" :match {:id pkg-id}})
+        broken_deps_count (broken-deps-count context pkg-id)
         prefix ["packages" pkg-id]
         stats (pg/execute! context {:sql [canonicals-stats-sql pkg-id]})]
     [:div.text-xs.px-2 {:style "width: 20em; max-width: 20em;"}
-     [:a.px-2.py-2.bg-sky-100.rounded-md.border.my-2.block  {:href (h/href ["packages" pkg-id])}
-      (str (:name pkg) "@" (:version pkg))]
+     [:a.px-2.py-2.rounded-md.border.my-2.block.flex.items-center.space-x-1
+      {:href (h/href ["packages" pkg-id])}
+      [:span.flex-1 (str (:name pkg) "@" (:version pkg))]
+      (when-not (= 0 broken_deps_count)
+        [:span {:class "ml-auto w-9 min-w-max rounded-full bg-white px-1.5 py-0.5 text-center text-xs font-medium whitespace-nowrap text-red-500 ring-1 ring-gray-200 ring-inset"}
+         broken_deps_count])]
      [:div.py-2
       (->> stats
            (mapv (fn [{rt :resource_type cnt :count}]
@@ -107,13 +123,27 @@ order by 1
     (->> deps
          (map (fn [[k d]]
                 [:div
-                 [:div.py-1 (h/link ["packages" (:id d)] [:span.space-x-2.flex [:i.fa-solid.fa-folder.text-orange-300] [:span (name k) "@" (:version d)]])]
+                 [:div.py-1
+                  (h/link ["packages" (:id d)] [:span.space-x-2.flex.items-center [:i.fa-solid.fa-folder.text-orange-300] [:span (name k) "@" (:version d)]])]
                  (when-let [deps (:deps d)]
                    [:div.px-8  (render-deps deps)])])))))
 
+(defn dependant-package-tab [context pkg-id]
+  (let [deps (pg.repo/select context {:table "package_dependency" :match {:dep_id pkg-id}})]
+    [(str "Dependant (" (count deps) ")")
+     (h/table [] deps
+              (fn [x]
+                [(h/link ["packages" (:package_id x)] (str (:name x) "@" (:version x)))]))]))
+
 (defn package-html [context {{id :id} :route-params :as request}]
   (let [pkg (pg.repo/read context {:table "package_version" :match {:id id}})
-        deps-tree (far.package/package-deps-tree context pkg)]
+        deps-tree [] #_(far.package/package-deps-tree context pkg)
+        broken-deps (pg.repo/select context {:table "canonical_deps"
+                                             :order-by [:pg/list :definition_resource_type :definition]
+                                             :limit 200
+                                             :where [:and [:= :package_id id]
+                                                     [:is :local nil]
+                                                     #_[:is :dep_id nil]]})]
     (h/layout
      context request
      {:topnav (fn [] (canonicals-tabs context id))
@@ -122,12 +152,22 @@ order by 1
                  [:div.p-4
                   (h/breadcramp "packages" "packages" "#" (:name pkg))
                   (h/h1 (:name pkg) "@" (:version pkg))
-                  [:p.text-sm.text-gray-600 (:description pkg)]
+                  [:p.text-sm.text-gray-600 {:style "width: 50em"}
+                   (:description pkg)]
 
                   (h/tabbed-content
                    ["Deps" [:div.px-8.py-4.bg-gray-100.border.rounded (render-deps deps-tree)]]
+                   [(str "Broken deps (" (count broken-deps) ")")
+                    (h/table [] broken-deps
+                             (fn [x]
+                               [(:definition_resource_type x)
+                                (h/link ["canonicals" (:definition_resource_type x) (:definition_id x)] (canonical-name (:definition x)))
+                                [:span.text-red-500 (:url x) (when-let [v (:version x)] (str "|" v))]]))]
                    ["Package.json" (h/json-block (dissoc pkg :all_dependencies))]
-                   ["Dependant" "TBD"])])})))
+                   (dependant-package-tab context id)
+                   ["Dependant" "TBD"])
+
+                  ])})))
 
 
 
@@ -146,13 +186,13 @@ order by 1
                                  {:href (h/href ["canonicals" "StructureDefinition" (:id c)])
                                   :hx-push-url "true"
                                   :hx-get (h/href ["canonicals" "StructureDefinition" (:id c)]) :hx-target "#content"}
-                                 (last (str/split (or (:url c) (:name c) ) #"/"))]))
+                                 (canonical-name (or (:url c) (:name c) ))]))
                         (into [:div]))]))
           (apply h/accordion))]))
 
 (defn cn-nav [context pkg-id rt]
   (let [cns (->> (pg.repo/select context {:table "canonical" :match {:package_id pkg-id :resource_type rt}})
-                 (sort-by (fn [c] (last (str/split (or (:url c) (:name c) ) #"/")))))]
+                 (sort-by (fn [c] (canonical-name (or (:url c) (:name c) )))))]
     [:div.text-xs.p-2 {:style "width: 20em; max-width: 20em; height: 100vh; overflow-y: auto;"}
      #_[:div.px-4.py-2.border-b.font-semibold.text-gray-500 rt]
      [:div [:input.bg-gray-100.my-1.px-2.py-1.border.block.w-full {:placeholder "Search..." :onkeyup "filterByClass('cn-item', event)"} ]]
@@ -164,7 +204,7 @@ order by 1
                     :href (h/href ["canonicals" (:resource_type c) (:id c)])
                     :hx-push-url "true"
                     :hx-get (h/href ["canonicals" (:resource_type c) (:id c)]) :hx-target "#content"}
-                   (last (str/split (or (:url c) (:name c) ) #"/"))))))]]))
+                   (canonical-name (or (:url c) (:name c) ))))))]]))
 
 (defn canonical-other-versions-tab [context cn]
   (let [other-versions (pg.repo/select context {:table "canonical" :match {:url (:url cn) :resource_type (:resourceType cn)}})]
@@ -231,7 +271,9 @@ order by 1
 
 (defn cn-content [context cn]
   [:div.px-4
-   (h/h1 [:span (:resourceType cn)] [:span (:name cn)])
+   (h/h1 [:span (:resourceType cn)] [:span (:name cn)]
+         [:a.text-sm.px-2.py-1.border.rounded-md.bg-gray-100 {:href (h/href ["compare" (:resourceType cn)] {:canonical (:url cn)})}
+          "Compare"])
 
    [:p.text-sm.text-gray-400 (:url cn)]
    (render-canonical context cn)])
@@ -266,27 +308,72 @@ order by 1
 
 
 ;;TODO prefix search
-(defn canonicals-lookup [context request]
-  (h/hiccup-response request
-                     (if (hx-target request)
-                       (let [q (get-in request [:query-params :search])
-                             cns (pg.repo/select
-                                  context {:table "canonical"
-                                           :where (when-not (str/blank? q)
-                                                    [:ilike :url [:pg/param (str "%" (str/replace q #"\s" "%") "%")]])
-                                           :order-by :url
-                                           :limit 100})]
-                         (h/table [] cns
-                                  (fn [r]
-                                    [(:resource_type r)
-                                     (h/link ["packages" (:package_id r)] (str (:package_name r) "@" (:package_version r)))
 
-                                     (h/link ["canonicals" (:resource_type r) (:id r)] (:url r))])))
-                       [:div.px-4
-                        [:br]
-                        (h/search-input {:path ["canonicals"]})
-                        [:br]
-                        [:div#search-results]])))
+(defn canonicals-lookup [context request]
+  (if (hx-target request)
+    (let [q (get-in request [:query-params :search])
+          cns (pg.repo/select
+               context {:table "canonical"
+                        :where (when-not (str/blank? q)
+                                 [:ilike :url [:pg/param (str "%" (str/replace q #"\s" "%") "%")]])
+                        :order-by :url
+                        :limit 100})]
+      (h/html-response
+       (h/table [] cns
+                (fn [r]
+                  [(:resource_type r)
+                   (h/link ["packages" (:package_id r)] (str (:package_name r) "@" (:package_version r)))
+
+                   (h/link ["canonicals" (:resource_type r) (:id r)] (:url r))]))))
+    (h/layout
+     context request
+     {:content [:div.px-4
+                [:br]
+                (h/search-input {:path ["canonicals"]})
+                [:br]
+                [:div#search-results]]
+      })))
+
+(defn compare-canonical-html [context request]
+  (let [url (get-in request [:query-params :canonical])
+        versions (->> (pg.repo/select context {:table "structuredefinition" :where [:and [:= :url url]
+                                                                                    [:not [:ilike :package_name "%examples%"]]]})
+                      (mapv fhir.schema.transpiler/translate))]
+    (h/layout
+     context request
+     {:content [:div.px-4
+                (h/h1 url)
+                (for [i (range (count versions))
+                      j (range (count versions))
+                      :when (not= i j)]
+                  (let [a (nth versions i) b (nth versions j)
+                        diff (->> (matcho.core/match* a b)
+                                  (remove (fn [{p :path e :expected b :but}]
+                                            (or (contains? #{[:version] [:package_id] [:package_name] [:package_version]} p)
+                                                (contains? #{:isModifier :index :id :mustSupport :isSummary :short} (last p))
+                                                (and (= :valueSet (last p))
+                                                     (= (first (str/split e #"\|"))
+                                                        (first (str/split b #"\|")))
+                                                     ))))
+                                  (sort-by :path))]
+                    [:details
+                     [:summary.px-2.py-1.bg-gray-100.border-b
+                      [:span (str (:package_name a) "@" (:package_version a)) " => " (str (:package_name b) "@" (:package_version b))]
+                      " "
+                      [:b "(" (count diff) ")"]]
+                     [:div.px-4
+                      (->> diff
+                           (map (fn [{p :path e :expected b :but}]
+                                  [:div.mb-2
+                                   (if (nil? b)
+                                     [:div
+                                      [:div.px-2.py-1.border-b "+  " (str/join "." (mapv (fn [x] (if (keyword? x) (name x) (str x))) p))]
+                                      [:div.px-4.text-sm "  "  (pr-str e)]]
+                                     [:div
+                                      [:div.px-2.py-1.border-b "!= " (str/join "." (mapv (fn [x] (if (keyword? x) (name x) (str x))) p))]
+                                      [:div.px-4.text-sm " "  (pr-str e)]
+                                      [:div.px-4.text-sm " "  (pr-str b)]])
+                                   ])))]]))]})))
 
 
 (defn mount-routes [context]
@@ -296,6 +383,8 @@ order by 1
 
   (http/register-endpoint context {:method :get :path "/packages/:id/:resource_type" :fn #'canonicals-html})
   (http/register-endpoint context {:method :get :path "/canonicals/:resource_type/:id" :fn #'canonical-html})
+  (http/register-endpoint context {:method :get :path "/canonicals/:resource_type/:id" :fn #'canonical-html})
+  (http/register-endpoint context {:method :get :path "/compare/:resource_type" :fn #'compare-canonical-html})
   (http/register-endpoint context {:method :get :path "/canonicals" :fn #'canonicals-lookup})
 
   )

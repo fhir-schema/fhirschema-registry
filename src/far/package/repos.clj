@@ -9,6 +9,13 @@
             [clojure.string :as str]))
 
 
+(def core-canonicals
+  ["structuredefinition"
+   "valueset"
+   "codesystem"
+   "implementationguide"
+   "namingsystem"])
+
 (def canonicals
   ["activitydefinition"
    "actordefinition"
@@ -122,11 +129,11 @@
                       :package_name {:type "text"}
                       :package_version {:type "text"}
                       :resource_type {:type "text" :required true}
+                      :local {:type "boolean"}
                       :url {:type "text" :index true}
                       :version {:type "text" :index true}
                       :status {:type "text"}
-                      :dep_id {:type "uuid"}
-                      :dep_package_id {:type "uuid" :index true}}})
+                      :binding_strength {:type "text"}}})
 
   (doseq [tbl canonicals]
     (pg.repo/register-repo

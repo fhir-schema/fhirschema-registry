@@ -1,5 +1,15 @@
 # FHIR Artifact repository
 
+## Basic cli
+
+* Install package with deps for example r4 & terminology.r4
+* Generate fhir-schemas
+* Resolve deps for fhir schemas
+* Generate type schemas
+
+far hl7.fhir.core.r4 -> type-schemas.ndjson.gz
+sdk-get type-schemas.ndjson.gz -> types
+
 ## TODO:
 
 
