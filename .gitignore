@@ -7,3 +7,5 @@ tmp
 .DS_Store
 data
 gcp-connection.json
+.clj-kondo/.cache
+.clj-kondo/imports

@@ -1,0 +1,2 @@
+{:lint-as {system/defstart clojure.core/fn
+           system/defstop clojure.core/fn}}
