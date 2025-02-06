@@ -5,9 +5,14 @@
             [cheshire.core]
             [utils.uuid]
             [far.package.repos :as repos]
+            [far.package.index :as index]
             [far.package.loader :as loader]
             [clojure.string :as str]))
 
+;; TODO: how to separate what need db service, and what not?
+
+(defn list-packages [_context]
+  (index/list-packages))
 
 ;; should accept package-name and package-version
 (defn load-package

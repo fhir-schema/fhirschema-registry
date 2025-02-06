@@ -1,5 +1,8 @@
 (ns far-cli
   (:require
+   [cheshire.core :as json]
+   [clojure.string :as str]
+   [clojure.pprint :as pprint]
    [clojure.tools.cli :as cli]
    [far.package]
    [fhir.schema.transpiler]
@@ -7,25 +10,103 @@
    [system])
   (:gen-class))
 
+;; database less version?
 
 (system/defmanifest
   {:description "create tables and save packages into this tables"
    :deps ["far-cli"]})
 
+(system/defstop [_context _state]
+  (shutdown-agents))
 
 (def cli-options
-  [["-h" "--help"]])
+  [["-p" "--package PACKAGE"
+    :id :packages
+    :multi true :default [] :update-fn conj]
+   ;; ["-d" "--database" "database connection string"]
+
+   ["-i" "--info" "print package info"]
+   ["-l" "--list" "list packages"]
+
+   ["-f" "--format FORMAT" "output format (text, json)"
+    :default :text :parse-fn keyword
+    :validate-fn #(contains? #{:text :json} %)]
+
+   ["-v" "--verbose"]
+   ["-h" "--help"]])
+
+;; cli -package hl7.fhir.core.r4 output typeschema --file ts.ndjson
+
+(defn- show-package-info [format pkg-info]
+  (case format
+    :text (str/trim (with-out-str (pprint/pprint pkg-info)))
+    :json (json/generate-string pkg-info)))
+
+(defn- show-package-list-item [format item]
+  (case format
+    :text (str (:id item)
+               (when (:title item) (str " -- " (:title item))))
+    :json (json/generate-string item)))
+
+(defn- print-cli-errors [summary errors]
+  (println "CLI errors:")
+  (doall (map #(println (str "  " %)) errors))
+  (println)
+  (println "Help")
+  (println summary))
+
 
 
 (defn -main [& args]
   (let [{options :options
          summary :summary
-         [command :as _arguments] :arguments
-         :as opts} (cli/parse-opts args cli-options)]
-    (prn opts)
+         errors :errors
+         :as opts} (cli/parse-opts args cli-options)
+
+        {packages :packages
+         format :format
+         verbose? :verbose} options
+
+        context (system/start-system {:services ["far-cli"]
+                                      :system/log-level (system/log-levels :error)})]
+
+    (when verbose? (pprint/pprint opts))
+
     (cond
+      (some? errors) (print-cli-errors summary errors)
       (:help options) (println summary)
-      :else (println "Hello, World!"))))
+
+      (:list options)
+      (doseq [package (far.package/list-packages context)]
+        (println (show-package-list-item format package)))
+
+      (:info options)
+      (doseq [package packages]
+        (let [[name version] (str/split package #"#" 2)
+              {error :error :as pkg-info} (far.package/pkg-info context name)
+              pkg-info (cond
+                         (some? error) {:id package
+                                        :error error}
+
+                         (and (some? version)
+                              (not (contains? (set (:versions pkg-info)) version)))
+                         (assoc pkg-info :error
+                                {:code "E404"
+                                 :summary (str "Specific version not found: " package)
+                                 :details (str "Available versions: " (str/join ", " (:versions pkg-info)))})
+
+                         (and (some? version)
+                              (contains? (set (:versions pkg-info)) version))
+                         (assoc pkg-info :version version)
+
+                         :else pkg-info)
+
+              pkg-str (show-package-info format pkg-info)]
+          (println pkg-str)))
+
+      :else (println summary))
+
+    (system/stop-system context)))
 
 (defn to-type-schema [schema]
 

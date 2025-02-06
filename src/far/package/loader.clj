@@ -11,7 +11,7 @@
 
 
 
-(defn pkg-info [context package-name]
+(defn pkg-info [_context package-name]
   (fhir.package/pkg-info package-name))
 
 (defn loadable? [nm]
