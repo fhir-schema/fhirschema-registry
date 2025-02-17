@@ -48,6 +48,29 @@
 ;; Print info for multiple packages with specific version:
 ;;
 ;;      $ far-cli --info --package us.nlm.vsac@0.1.0 --package us.nlm.vsac@0.12.0
+;;      
+;; ## Root Package
+;;
+;; FHIR Server should work with different types of resources, codesystems,
+;; valuesets, etc. These elements may be defined in several packages. Root
+;; package -- is an entity, which allow us to list required packages.
+;;
+;; We have at several approches to work with root package:
+;;
+;; - (aidbox) implicitly: use all installed packages
+;;
+;; - (far-cli) anonymously: specify all packages in CLI
+;;
+;; - explicitly: FHIR provides us a solution to represent package on the file
+;;   system, so we can use it in the following way:
+;;
+;;     $ far-cli init
+;;     $ far-cli install fhir.r4
+;;     $ far-cli add sd.json
+;;     $ far-cli export
+;;     $ far-cli lock
+;;     $ far-cli update
+;;     $ far-cli publish
 ;;
 ;; ## With Database
 ;;
@@ -67,12 +90,18 @@
 ;;
 ;;     $ clj -M:far-cli --db $DB --remove -p us.nlm.vsac -p us.nlm.vsac@0.1.0
 ;;
-;; Print root-package (something like lock file):
+;; Print root-package info, which use all installed packages (if multiple -- try
+;; to use latest):
 ;;
 ;;     $ clj -M:far-cli --info --root-package
 ;;
-;; Export root package defined by package list to specific path (implicitly set
-;; `--entiry sd`, which means that we need structure-definitions in the output):
+;; Print root-package with specific packages:
+;;
+;;     $ clj -M:far-cli --info --root-package -p us.nlm.vsac@0.1.0
+;;
+;; Export root package content defined by package list to specific
+;; path (implicitly set `--entiry sd`, which means that we need
+;; structure-definitions in the output):
 ;;
 ;;     $ clj -M:far-cli --db $DB --export --output path -p us.nlm.vsac
 ;; 
@@ -92,7 +121,7 @@
 ;;
 ;;     $ clj -M:far-cli --db $DB --export --log \
 ;;         --entity fs --entity sd -c http://hl7.org/fhir/StructureDefinition/Patient
-
+;;
 (def cli-options
   [["-p" "--package PACKAGE" "<name>[@<version>]"
     :id :packages
