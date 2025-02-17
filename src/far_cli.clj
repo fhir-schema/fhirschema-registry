@@ -1,61 +1,124 @@
 (ns far-cli
   (:require
-   [cheshire.core :as json]
    [clojure.string :as str]
-   [clojure.pprint :as pprint]
    [clojure.tools.cli :as cli]
+   [far-cli.operations :as far-cli]
    [far.package]
+   [pg]
    [fhir.schema.transpiler]
    [fhir.schema.typeschema]
    [system])
   (:gen-class))
 
-;; database less version?
+(defn defstart-far-cli [database verbosity]
+  ;; NOTE: hmmm....
+  (system/defmanifest
+    {:description "create tables and save packages into this tables"
+     :deps (concat (when database ["pg" "far.package"]))})
 
-(system/defmanifest
-  {:description "create tables and save packages into this tables"
-   :deps ["far-cli"]})
+  (system/defstop [_context _state]
+    (shutdown-agents))
 
-(system/defstop [_context _state]
-  (shutdown-agents))
+  (system/start-system {:services (concat ["far-cli"]
+                                          (when database ["pg" "far.package"]))
+                        :system/log-level verbosity
+                        :pg database}))
+
+;; cli -package hl7.fhir.core.r4 output typeschema --file ts.ndjson
+
+;; # FAR CLI
+;;
+;;      $ clj -M:far-cli --help
+;; 
+;; ## Database Less
+;;
+;; Print all available packages (from Aidbox search tree, `--format text` pass
+;; implicitly):
+;;
+;;      $ far-cli --search
+;;
+;; Print all available packages in json:
+;;
+;;      $ far-cli --search --json
+;;   
+;; Print package info (if db available -- provide instalation info):
+;; 
+;;      $ far-cli --info --package us.nlm.vsac
+;;
+;; Print info for multiple packages with specific version:
+;;
+;;      $ far-cli --info --package us.nlm.vsac@0.1.0 --package us.nlm.vsac@0.12.0
+;;
+;; ## With Database
+;;
+;; Set db connection:
+;;
+;;     $ export DB=postgresql://fhirpackages:secret@localhost:5437/fhirpackages
+;;
+;; List all installed packages:
+;;
+;;     $ clj -M:far-cli --db $DB --list
+;;
+;; Install packages & print all installed packages:
+;;
+;;     $ clj -M:far-cli --db $DB --install -p us.nlm.vsac -p us.nlm.vsac@0.1.0
+;;
+;; Remove packages:
+;;
+;;     $ clj -M:far-cli --db $DB --remove -p us.nlm.vsac -p us.nlm.vsac@0.1.0
+;;
+;; Print root-package (something like lock file):
+;;
+;;     $ clj -M:far-cli --info --root-package
+;;
+;; Export root package defined by package list to specific path (implicitly set
+;; `--entiry sd`, which means that we need structure-definitions in the output):
+;;
+;;     $ clj -M:far-cli --db $DB --export --output path -p us.nlm.vsac
+;; 
+;; Export root package defined by canonicals list to ndjson as a FHIR Schema and
+;; Type Schema set:
+;;
+;;     $ clj -M:far-cli --db $DB --export --output file.ndjson \
+;;         --entity fs --entity sd -c http://hl7.org/fhir/StructureDefinition/Patient
+;;
+;; Print only specific canonical definition to stdout in FHIR Schema and
+;; structure-definitions format:
+;;
+;;     $ clj -M:far-cli --db $DB --export --no-deps \
+;;         --entity fs --entity sd -c http://hl7.org/fhir/StructureDefinition/Patient
+;;
+;; Print specific canonical definition log (version history) (implicitly: `--no-deps`):
+;;
+;;     $ clj -M:far-cli --db $DB --export --log \
+;;         --entity fs --entity sd -c http://hl7.org/fhir/StructureDefinition/Patient
 
 (def cli-options
-  [["-p" "--package PACKAGE"
+  [["-p" "--package PACKAGE" "<name>[@<version>]"
     :id :packages
     :multi true :default [] :update-fn conj]
-   ;; ["-d" "--database" "database connection string"]
 
+   ["-d" "--db URL" "database connection string"
+    :id :database :parse-fn far-cli/parse-connection-string]
+
+   ;; without db
    ["-i" "--info" "print package info"]
    ["-l" "--list" "list packages"]
+
+   ;; with db
+   [nil "--list-local" "list local packages"]
+   [nil "--load"]
+   ;; ["-c" "--canonical" "list canonicals"]
 
    ["-f" "--format FORMAT" "output format (text, json)"
     :default :text :parse-fn keyword
     :validate-fn #(contains? #{:text :json} %)]
 
-   ["-v" "--verbose"]
+   ["-v" nil "Verbosity level"
+    :id :verbosity
+    :default 0
+    :update-fn inc]
    ["-h" "--help"]])
-
-;; cli -package hl7.fhir.core.r4 output typeschema --file ts.ndjson
-
-(defn- show-package-info [format pkg-info]
-  (case format
-    :text (str/trim (with-out-str (pprint/pprint pkg-info)))
-    :json (json/generate-string pkg-info)))
-
-(defn- show-package-list-item [format item]
-  (case format
-    :text (str (:id item)
-               (when (:title item) (str " -- " (:title item))))
-    :json (json/generate-string item)))
-
-(defn- print-cli-errors [summary errors]
-  (println "CLI errors:")
-  (doall (map #(println (str "  " %)) errors))
-  (println)
-  (println "Help")
-  (println summary))
-
-
 
 (defn -main [& args]
   (let [{options :options
@@ -65,57 +128,48 @@
 
         {packages :packages
          format :format
-         verbose? :verbose} options
+         database :database
+         verbosity :verbosity} options
 
-        context (system/start-system {:services ["far-cli"]
-                                      :system/log-level (system/log-levels :error)})]
+        context (defstart-far-cli database verbosity)]
 
-    (when verbose? (pprint/pprint opts))
+    (system/debug context ::start opts)
 
     (cond
-      (some? errors) (print-cli-errors summary errors)
+      (some? errors) (far-cli/print-cli-errors summary errors)
       (:help options) (println summary)
+
+      (:load options)
+      (doseq [package packages
+              :let [[name ver] (str/split package #"@" 2)]]
+        (assert (some? ver) "version is required")
+        (when verbosity (println (str "Downloading " package)))
+        (far.package/load-package context name ver))
 
       (:list options)
       (doseq [package (far.package/list-packages context)]
-        (println (show-package-list-item format package)))
+        (println (far-cli/show-package-list-item format package)))
+
+      (:list-local options)
+      (doseq [package (far.package/packages context {})]
+        (prn package))
 
       (:info options)
       (doseq [package packages]
-        (let [[name version] (str/split package #"#" 2)
-              {error :error :as pkg-info} (far.package/pkg-info context name)
-              pkg-info (cond
-                         (some? error) {:id package
-                                        :error error}
-
-                         (and (some? version)
-                              (not (contains? (set (:versions pkg-info)) version)))
-                         (assoc pkg-info :error
-                                {:code "E404"
-                                 :summary (str "Specific version not found: " package)
-                                 :details (str "Available versions: " (str/join ", " (:versions pkg-info)))})
-
-                         (and (some? version)
-                              (contains? (set (:versions pkg-info)) version))
-                         (assoc pkg-info :version version)
-
-                         :else pkg-info)
-
-              pkg-str (show-package-info format pkg-info)]
+        (let [pkg-info (far.package/pkg-info context package)
+              pkg-str (far-cli/show-package-info format pkg-info)]
           (println pkg-str)))
 
-      :else (println summary))
+      :else (do (println "Please, specify action.")
+                (println summary)))
 
     (system/stop-system context)))
 
-(defn to-type-schema [schema]
-
-  )
+(defn to-type-schema [schema])
 
 (comment
 
   (def context (system/start-system {:services ["far-cli"]}))
-
 
   (def pkgi-r5 (far.package/pkg-info context "hl7.fhir.r5.core"))
   (def pkgi-tr5 (far.package/pkg-info context "hl7.terminology.r5"))
@@ -127,13 +181,11 @@
 
   (->> (get pkg-r5-bundle "structuredefinition")
        (keys)
-       (sort)
-       )
+       (sort))
 
   (->> (get pkg-tr5-bundle "codesystem")
        (keys)
-       (sort)
-       )
+       (sort))
 
   (far.package/pkg-info context "hl7.fhir.r4.core")
 
@@ -165,9 +217,8 @@
   ;; * array:boolean
   ;; * biding
 
-
   {:kind "resource",
-   :name {:name "Patient" :url "" :package {:packageId "" :versioin "" :uri ""} },
+   :name {:name "Patient" :url "" :package {:packageId "" :versioin "" :uri ""}},
    :base {:name "DomainResource", :package {}},
    :deps
    #{{:name "BackboneElement", :package {}, :type "complex-type"} ;; valueset | primitive-type | resource

@@ -39,7 +39,7 @@
               {:name    (:name m)
                :title   (:title m)
                :version (:version m)
-               :id      (:id m)}))
+               :id      (str (:name m) "@" (:version m))}))
        (sort-by :name)
        (doall)))
 

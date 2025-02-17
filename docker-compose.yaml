@@ -3,6 +3,7 @@ services:
     container_name: fhirpackages_pg
     image: postgres:latest
     environment:
+      # --db postgresql://fhirpackages:secret@localhost:5437/fhirpackages
       POSTGRES_DB: fhirpackages
       POSTGRES_USER: fhirpackages
       POSTGRES_PASSWORD: secret
